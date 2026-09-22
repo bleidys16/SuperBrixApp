@@ -1,0 +1,91 @@
+<svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+  <style>
+    .title { font-size: 22px; font-weight: bold; fill: #1f2937; }
+    .subtitle { font-size: 14px; fill: #6b7280; }
+    .step { fill: #ffffff; stroke-width: 2; rx: 10; }
+    .step-old { stroke: #f59e0b; }
+    .step-new { stroke: #10b981; }
+    .step-label { font-size: 14px; fill: #1f2937; font-weight: bold; }
+    .step-sub { font-size: 11px; fill: #6b7280; }
+    .arrow { stroke: #9ca3af; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    .lane-label { font-size: 13px; fill: #374151; font-weight: bold; }
+    .time-old { font-size: 13px; fill: #b45309; font-weight: bold; }
+    .time-new { font-size: 13px; fill: #047857; font-weight: bold; }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="30" class="title">Proceso Actual vs. Proceso Digital — SuperBrix</text>
+
+  <!-- OLD PROCESS -->
+  <text x="20" y="70" class="lane-label">Método actual (manual)</text>
+
+  <rect x="20" y="90" width="180" height="70" class="step step-old"/>
+  <text x="35" y="118" class="step-label">Tarjeta física</text>
+  <text x="35" y="136" class="step-sub">Operario anota horas</text>
+  <text x="35" y="150" class="step-sub">a mano en papel</text>
+
+  <path d="M200,125 H260" class="arrow"/>
+
+  <rect x="260" y="90" width="180" height="70" class="step step-old"/>
+  <text x="275" y="118" class="step-label">Revisión</text>
+  <text x="275" y="136" class="step-sub">Supervisor valida</text>
+  <text x="275" y="150" class="step-sub">tarjetas al final del turno</text>
+
+  <path d="M440,125 H500" class="arrow"/>
+
+  <rect x="500" y="90" width="180" height="70" class="step step-old"/>
+  <text x="515" y="118" class="step-label">Digitación</text>
+  <text x="515" y="136" class="step-sub">Datos se pasan al</text>
+  <text x="515" y="150" class="step-sub">sistema, horas/días después</text>
+
+  <path d="M680,125 H740" class="arrow"/>
+
+  <rect x="740" y="90" width="220" height="70" class="step step-old"/>
+  <text x="755" y="118" class="step-label">Decisión tardía</text>
+  <text x="755" y="136" class="step-sub">El jefe de taller decide</text>
+  <text x="755" y="150" class="step-sub">sobre datos ya viejos</text>
+
+  <text x="20" y="195" class="time-old">⏱ Visibilidad: horas o días después · alta carga administrativa</text>
+
+  <!-- Divider -->
+  <line x1="0" y1="225" x2="1000" y2="225" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- NEW PROCESS -->
+  <text x="20" y="255" class="lane-label">Método digital (propuesto)</text>
+
+  <rect x="20" y="275" width="180" height="80" class="step step-new"/>
+  <text x="35" y="300" class="step-label">Captura móvil</text>
+  <text x="35" y="318" class="step-sub">Botón rápido o voz:</text>
+  <text x="35" y="332" class="step-sub">"Paré la fresadora..."</text>
+
+  <path d="M200,315 H260" class="arrow"/>
+
+  <rect x="260" y="275" width="180" height="80" class="step step-new"/>
+  <text x="275" y="300" class="step-label">Clasificación IA</text>
+  <text x="275" y="318" class="step-sub">Apps Script + NVIDIA</text>
+  <text x="275" y="332" class="step-sub">asigna categoría al instante</text>
+
+  <path d="M440,315 H500" class="arrow"/>
+
+  <rect x="500" y="275" width="180" height="80" class="step step-new"/>
+  <text x="515" y="300" class="step-label">Google Sheets</text>
+  <text x="515" y="318" class="step-sub">Registro estructurado</text>
+  <text x="515" y="332" class="step-sub">automático, sin digitar</text>
+
+  <path d="M680,315 H740" class="arrow"/>
+
+  <rect x="740" y="275" width="220" height="80" class="step step-new"/>
+  <text x="755" y="300" class="step-label">Looker Studio</text>
+  <text x="755" y="318" class="step-sub">Dashboard en vivo:</text>
+  <text x="755" y="332" class="step-sub">jefe de taller decide ya</text>
+
+  <text x="20" y="390" class="time-new">⚡ Visibilidad: segundos · cero digitación manual · foco del supervisor en el taller</text>
+
+  <rect x="20" y="410" width="940" height="50" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
+  <text x="35" y="432" class="step-sub" fill="#047857" font-weight="bold" font-size="13">Beneficio clave: se elimina la revisión y digitación manual, y la decisión operativa</text>
+  <text x="35" y="450" class="step-sub" fill="#047857" font-size="13">pasa de tomarse "horas/días después" a tomarse "en el mismo turno".</text>
+</svg>

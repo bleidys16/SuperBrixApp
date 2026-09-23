@@ -1,0 +1,624 @@
+<title>Sensor SuperBrix</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #141d2e;
+    --panel-2: #1b2740;
+    --border: #2a3852;
+    --text: #eef2f8;
+    --muted: #8b98b3;
+    --accent: #f97316;
+    --accent-ink: #431407;
+    --ok: #22c55e;
+    --ok-ink: #052e16;
+    --warn: #f59e0b;
+    --bad: #ef4444;
+    --info: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding-inline: 16px;
+    padding-block: 18px 32px;
+    max-width: 520px;
+    margin-inline: auto;
+    background: var(--bg);
+  }
+  h1 { font-size: 0; }
+  .tag {
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin: 0 0 2px;
+  }
+  .brand {
+    font-size: 20px;
+    font-weight: 800;
+    margin: 0 0 18px;
+    color: var(--text);
+  }
+  .brand span { color: var(--accent); }
+
+  .status-card {
+    border-radius: 18px;
+    padding: 22px 20px;
+    text-align: center;
+    border: 2px solid var(--border);
+    background: var(--panel);
+    transition: background .25s ease, border-color .25s ease;
+  }
+  .status-card.activo {
+    background: linear-gradient(160deg, #052e16, #0b1220 70%);
+    border-color: var(--ok);
+  }
+  .status-card.parado {
+    background: linear-gradient(160deg, #3f1d0a, #0b1220 70%);
+    border-color: var(--warn);
+  }
+  .status-card.interrupcion {
+    background: linear-gradient(160deg, #450a0a, #0b1220 70%);
+    border-color: var(--bad);
+  }
+  .status-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    display: inline-block; margin-right: 8px;
+    background: var(--muted);
+  }
+  .activo .status-dot { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
+  .parado .status-dot { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+  .interrupcion .status-dot { background: var(--bad); box-shadow: 0 0 12px var(--bad); }
+  .status-label {
+    font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700;
+  }
+  .status-categoria {
+    font-size: 24px; font-weight: 800; margin: 8px 0 4px;
+  }
+  .status-timer {
+    font-variant-numeric: tabular-nums;
+    font-size: 15px; color: var(--muted);
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-top: 14px;
+  }
+  .panel-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 700; margin: 0 0 10px;
+  }
+
+  .datos-fijos { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+  .datos-fijos b { color: var(--text); }
+  .datos-fijos span { color: var(--muted); }
+
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  button {
+    font-family: inherit;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+  }
+  button:active { transform: scale(.98); }
+  .btn-arm {
+    width: 100%;
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 16px;
+    font-size: 15px;
+    border: none;
+  }
+  .btn-arm.armado { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  .btn-causa { flex: 1 1 calc(50% - 5px); text-align: left; padding: 14px; }
+  .btn-causa .emoji { font-size: 18px; margin-right: 6px; }
+  .btn-causa small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; margin-top: 2px; }
+  .btn-falla { border-color: var(--bad); }
+  .btn-espera { border-color: var(--warn); }
+  .btn-pausa { border-color: var(--info); }
+
+  .causa-panel { display: none; }
+  .causa-panel.visible { display: block; }
+
+  .otra-causa { display: flex; gap: 8px; margin-top: 10px; }
+  .otra-causa input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .otra-causa button { background: var(--accent); color: var(--accent-ink); white-space: nowrap; }
+
+  details { margin-top: 14px; }
+  summary {
+    cursor: pointer; font-size: 12px; color: var(--muted);
+    font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    padding: 4px 0;
+  }
+  .calib-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .calib-row input[type="range"] { flex: 1; }
+  .calib-row b { color: var(--text); min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+  .meter-bar { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; margin-top: 8px; }
+  .meter-fill { height: 100%; background: var(--info); width: 0%; transition: width .08s linear; }
+  .meter-fill.over { background: var(--accent); }
+
+  .campo-editar { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .campo-editar input {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; color: var(--text); font-size: 13px;
+  }
+
+  .log { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+  .log-item {
+    font-size: 12px; padding: 8px 10px; border-radius: 8px;
+    background: var(--panel-2); border-left: 3px solid var(--border);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .log-item .hora { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .log-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
+  .aviso {
+    font-size: 12px; color: var(--warn); background: #3f1d0a33;
+    border: 1px solid var(--warn); border-radius: 10px; padding: 10px 12px; margin-top: 12px;
+    display: none;
+  }
+  .aviso.visible { display: block; }
+  .nota { font-size: 11px; color: var(--muted); margin-top: 14px; line-height: 1.5; }
+</style>
+
+<p class="tag">SuperBrix · Demo de hardware</p>
+<h1 class="brand">Sensor <span>de vibración</span></h1>
+
+<div class="status-card parado" id="statusCard">
+  <div class="status-label"><span class="status-dot" id="statusDot"></span><span id="statusLabel">Sensor apagado</span></div>
+  <div class="status-categoria" id="statusCategoria">Toca "Armar sensor" para empezar</div>
+  <div class="status-timer" id="statusTimer">00:00</div>
+</div>
+
+<button class="btn-arm" id="btnArmar">▶ Armar sensor</button>
+
+<div class="aviso" id="avisoSinSensor">
+  No se están recibiendo lecturas del acelerómetro. Confirma que estás en Chrome de un celular
+  (no en una laptop) y que el navegador tiene permiso de movimiento.
+</div>
+
+<div class="panel causa-panel" id="panelCausa">
+  <p class="panel-title">El sensor detectó que se detuvo — ¿por qué?</p>
+  <div class="btn-row">
+    <button class="btn-causa btn-falla" data-cat="Falla Técnica / Mantenimiento">
+      <span class="emoji">⚠️</span>Falla técnica
+      <small>Ruido, no enciende, mantenimiento</small>
+    </button>
+    <button class="btn-causa btn-espera" data-cat="Espera de Materiales / Logística">
+      <span class="emoji">📦</span>Espera de materiales
+      <small>Falta insumo o herramienta</small>
+    </button>
+    <button class="btn-causa btn-pausa" data-cat="Ausencia del Operario / Descanso">
+      <span class="emoji">☕</span>Pausa / operario
+      <small>Baño, agua, descanso</small>
+    </button>
+  </div>
+  <div class="otra-causa">
+    <input type="text" id="inputOtraCausa" placeholder='Otra causa, ej. "esperando visto bueno de calidad"' />
+    <button id="btnOtraCausa">Enviar a IA</button>
+  </div>
+</div>
+
+<div class="panel">
+  <p class="panel-title">Datos de esta demo (fijos)</p>
+  <div class="datos-fijos">
+    <span><b id="dCedula"></b></span>
+    <span><b id="dNombre"></b></span>
+    <span>OP <b id="dOp"></b></span>
+    <span><b id="dMaquina"></b></span>
+  </div>
+  <details>
+    <summary>Editar datos fijos</summary>
+    <div class="campo-editar"><label>Cédula</label><input id="inCedula" /></div>
+    <div class="campo-editar"><label>Nombre</label><input id="inNombre" /></div>
+    <div class="campo-editar"><label>OP#</label><input id="inOp" /></div>
+    <div class="campo-editar"><label>Máquina / puesto</label><input id="inMaquina" /></div>
+  </details>
+</div>
+
+<details class="panel">
+  <summary>Calibración del sensor</summary>
+  <p class="nota" style="margin-top:6px">
+    Pega el celular a la herramienta y enciéndela: la barra de abajo debe cruzar la línea naranja.
+    Súbele o bájale el umbral hasta que distinga bien "trabajando" de "quieto".
+  </p>
+  <div class="calib-row">
+    <span>Umbral</span>
+    <input type="range" id="rangoUmbral" min="0.1" max="6" step="0.1" value="1.2" />
+    <b id="valUmbral">1.2</b>
+  </div>
+  <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
+  <div class="calib-row">
+    <span>Confirmar detención (s)</span>
+    <input type="range" id="rangoDetenido" min="0.5" max="5" step="0.5" value="1.8" />
+    <b id="valDetenido">1.8s</b>
+  </div>
+  <div class="calib-row">
+    <span>Confirmar arranque (s)</span>
+    <input type="range" id="rangoArranque" min="0.1" max="3" step="0.1" value="0.4" />
+    <b id="valArranque">0.4s</b>
+  </div>
+  <button id="btnSimular" style="margin-top:10px; width:100%;">🧪 Mantén presionado para simular vibración</button>
+</details>
+
+<div class="panel">
+  <p class="panel-title">Últimos eventos enviados</p>
+  <div class="log" id="log"><div class="log-empty">Todavía no se ha enviado nada.</div></div>
+</div>
+
+<p class="nota">
+  Cada evento se manda al mismo backend de Apps Script que usa la app móvil (mismo formato,
+  misma hoja "Registros"). Por evitar bloqueos de CORS del navegador no se lee la respuesta del
+  servidor: para ver qué categoría asignó la IA en la opción "Enviar a IA", revisa el Sheet o Looker.
+</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var API_URL = 'https://script.google.com/macros/s/AKfycbwchXUR0oUpAg_cWGkNjM2vXnKtXuKLNJs7j58jryN6NmDqB4oxPMQqjqQ_oC7M5IxzuQ/exec';
+
+  var DEFAULTS = {
+    cedula: '11223344',
+    nombre: 'Operario Sensor (Demo)',
+    op: '90001',
+    maquina: 'Taladro de banco (sensor)',
+  };
+
+  function cargarDatos() {
+    try {
+      var raw = localStorage.getItem('superbrix_sensor_datos');
+      if (raw) return Object.assign({}, DEFAULTS, JSON.parse(raw));
+    } catch (e) {}
+    return Object.assign({}, DEFAULTS);
+  }
+  function guardarDatos(d) {
+    try { localStorage.setItem('superbrix_sensor_datos', JSON.stringify(d)); } catch (e) {}
+  }
+
+  var datos = cargarDatos();
+
+  var els = {
+    statusCard: document.getElementById('statusCard'),
+    statusDot: document.getElementById('statusDot'),
+    statusLabel: document.getElementById('statusLabel'),
+    statusCategoria: document.getElementById('statusCategoria'),
+    statusTimer: document.getElementById('statusTimer'),
+    btnArmar: document.getElementById('btnArmar'),
+    avisoSinSensor: document.getElementById('avisoSinSensor'),
+    panelCausa: document.getElementById('panelCausa'),
+    inputOtraCausa: document.getElementById('inputOtraCausa'),
+    btnOtraCausa: document.getElementById('btnOtraCausa'),
+    dCedula: document.getElementById('dCedula'),
+    dNombre: document.getElementById('dNombre'),
+    dOp: document.getElementById('dOp'),
+    dMaquina: document.getElementById('dMaquina'),
+    inCedula: document.getElementById('inCedula'),
+    inNombre: document.getElementById('inNombre'),
+    inOp: document.getElementById('inOp'),
+    inMaquina: document.getElementById('inMaquina'),
+    rangoUmbral: document.getElementById('rangoUmbral'),
+    valUmbral: document.getElementById('valUmbral'),
+    rangoDetenido: document.getElementById('rangoDetenido'),
+    valDetenido: document.getElementById('valDetenido'),
+    rangoArranque: document.getElementById('rangoArranque'),
+    valArranque: document.getElementById('valArranque'),
+    meterFill: document.getElementById('meterFill'),
+    btnSimular: document.getElementById('btnSimular'),
+    log: document.getElementById('log'),
+  };
+
+  function pintarDatosFijos() {
+    els.dCedula.textContent = 'CC ' + datos.cedula;
+    els.dNombre.textContent = datos.nombre;
+    els.dOp.textContent = datos.op;
+    els.dMaquina.textContent = datos.maquina;
+    els.inCedula.value = datos.cedula;
+    els.inNombre.value = datos.nombre;
+    els.inOp.value = datos.op;
+    els.inMaquina.value = datos.maquina;
+  }
+  pintarDatosFijos();
+  [els.inCedula, els.inNombre, els.inOp, els.inMaquina].forEach(function (input, i) {
+    var claves = ['cedula', 'nombre', 'op', 'maquina'];
+    input.addEventListener('change', function () {
+      datos[claves[i]] = input.value.trim() || DEFAULTS[claves[i]];
+      guardarDatos(datos);
+      pintarDatosFijos();
+    });
+  });
+
+  // ---------- Envío al backend (idéntico formato a src/api.ts de la app) ----------
+  function generarEventId() {
+    return Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function enviarEvento(payload) {
+    var conId = Object.assign({ eventId: generarEventId() }, payload);
+    fetch(API_URL, {
+      method: 'POST',
+      mode: 'no-cors', // el celular no necesita leer la respuesta, solo que la fila quede guardada
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(conId),
+    }).catch(function (err) {
+      registrarLog('❌ Error de red: ' + err, true);
+    });
+    return conId;
+  }
+
+  function registrarLog(texto, esError) {
+    var vacio = els.log.querySelector('.log-empty');
+    if (vacio) vacio.remove();
+    var item = document.createElement('div');
+    item.className = 'log-item';
+    if (esError) item.style.borderLeftColor = 'var(--bad)';
+    var hora = new Date().toLocaleTimeString('es-CO', { hour12: false });
+    item.innerHTML = '<span>' + texto + '</span><span class="hora">' + hora + '</span>';
+    els.log.insertBefore(item, els.log.firstChild);
+    while (els.log.children.length > 6) els.log.removeChild(els.log.lastChild);
+  }
+
+  // ---------- Máquina de estados ----------
+  // fases: 'apagado' | 'esperando' | 'activo' | 'parado_sin_causa' | 'interrupcion'
+  var fase = 'apagado';
+  var segmento = null; // { categoria, inicioMs }
+  var timerInterval = null;
+
+  function horasSegmentoActual() {
+    return segmento ? (Date.now() - segmento.inicioMs) / 1000 / 3600 : undefined;
+  }
+
+  function actualizarTimer() {
+    if (!segmento) { els.statusTimer.textContent = '00:00'; return; }
+    var totalSeg = Math.floor((Date.now() - segmento.inicioMs) / 1000);
+    var min = String(Math.floor(totalSeg / 60)).padStart(2, '0');
+    var seg = String(totalSeg % 60).padStart(2, '0');
+    els.statusTimer.textContent = min + ':' + seg;
+  }
+
+  function pintarEstado() {
+    els.statusCard.className = 'status-card';
+    els.panelCausa.classList.remove('visible');
+    if (fase === 'apagado') {
+      els.statusCard.classList.add('parado');
+      els.statusLabel.textContent = 'Sensor apagado';
+      els.statusCategoria.textContent = 'Toca "Armar sensor" para empezar';
+    } else if (fase === 'esperando') {
+      els.statusCard.classList.add('parado');
+      els.statusLabel.textContent = 'Armado — esperando movimiento';
+      els.statusCategoria.textContent = 'Enciende la herramienta…';
+    } else if (fase === 'activo') {
+      els.statusCard.classList.add('activo');
+      els.statusLabel.textContent = 'Detectado por el sensor';
+      els.statusCategoria.textContent = segmento.categoria;
+    } else if (fase === 'parado_sin_causa') {
+      els.statusCard.classList.add('parado');
+      els.statusLabel.textContent = 'Sin movimiento — elige la causa';
+      els.statusCategoria.textContent = segmento ? segmento.categoria + ' (cerrando)' : '—';
+    } else if (fase === 'interrupcion') {
+      els.statusCard.classList.add('interrupcion');
+      els.statusLabel.textContent = 'Interrupción activa';
+      els.statusCategoria.textContent = segmento.categoria;
+    }
+  }
+
+  function iniciarProduccion() {
+    enviarEvento({
+      cedula: datos.cedula, nombre: datos.nombre, op: datos.op, maquina: datos.maquina,
+      abreNuevoSegmento: true, categoria: 'Producción Activa',
+    });
+    segmento = { categoria: 'Producción Activa', inicioMs: Date.now() };
+    fase = 'activo';
+    registrarLog('▶ Sensor detectó inicio → Producción Activa');
+    pintarEstado();
+  }
+
+  function detectarParada() {
+    // No se envía nada todavía: se espera a que se elija (o se escriba) la causa.
+    fase = 'parado_sin_causa';
+    registrarLog('⏸ Sensor detectó que se detuvo, esperando causa…');
+    pintarEstado();
+  }
+
+  function cerrarConCausaManual(categoria) {
+    enviarEvento({
+      cedula: datos.cedula, nombre: datos.nombre, op: datos.op, maquina: datos.maquina,
+      categoriaCerrada: segmento.categoria, horasCerradas: horasSegmentoActual(),
+      abreNuevoSegmento: true, categoria: categoria,
+    });
+    segmento = { categoria: categoria, inicioMs: Date.now() };
+    fase = 'interrupcion';
+    registrarLog('🏷 Causa manual: ' + categoria);
+    pintarEstado();
+  }
+
+  function cerrarConTextoLibre(texto) {
+    enviarEvento({
+      cedula: datos.cedula, nombre: datos.nombre, op: datos.op, maquina: datos.maquina,
+      categoriaCerrada: segmento.categoria, horasCerradas: horasSegmentoActual(),
+      abreNuevoSegmento: true, texto: texto,
+    });
+    segmento = { categoria: 'Analizando con IA…', inicioMs: Date.now() };
+    fase = 'interrupcion';
+    registrarLog('🤖 Enviado a la IA: "' + texto + '"');
+    pintarEstado();
+  }
+
+  function reanudarProduccion() {
+    // Se usa desde 'interrupcion' cuando el sensor vuelve a sentir movimiento.
+    enviarEvento({
+      cedula: datos.cedula, nombre: datos.nombre, op: datos.op, maquina: datos.maquina,
+      categoriaCerrada: segmento.categoria, horasCerradas: horasSegmentoActual(),
+      abreNuevoSegmento: true, categoria: 'Producción Activa',
+    });
+    segmento = { categoria: 'Producción Activa', inicioMs: Date.now() };
+    fase = 'activo';
+    registrarLog('▶ Sensor detectó que reanudó → Producción Activa');
+    pintarEstado();
+  }
+
+  document.querySelectorAll('.btn-causa').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (fase !== 'parado_sin_causa') return;
+      cerrarConCausaManual(btn.getAttribute('data-cat'));
+    });
+  });
+  els.btnOtraCausa.addEventListener('click', function () {
+    var texto = els.inputOtraCausa.value.trim();
+    if (!texto || fase !== 'parado_sin_causa') return;
+    cerrarConTextoLibre(texto);
+    els.inputOtraCausa.value = '';
+  });
+
+  setInterval(actualizarTimer, 1000);
+
+  // ---------- Lectura del acelerómetro ----------
+  var umbral = parseFloat(els.rangoUmbral.value);
+  var sostenParado = parseFloat(els.rangoDetenido.value) * 1000;
+  var sostenActivo = parseFloat(els.rangoArranque.value) * 1000;
+
+  els.rangoUmbral.addEventListener('input', function () {
+    umbral = parseFloat(els.rangoUmbral.value);
+    els.valUmbral.textContent = umbral.toFixed(1);
+  });
+  els.rangoDetenido.addEventListener('input', function () {
+    sostenParado = parseFloat(els.rangoDetenido.value) * 1000;
+    els.valDetenido.textContent = els.rangoDetenido.value + 's';
+  });
+  els.rangoArranque.addEventListener('input', function () {
+    sostenActivo = parseFloat(els.rangoArranque.value) * 1000;
+    els.valArranque.textContent = els.rangoArranque.value + 's';
+  });
+
+  var lastMag = null;
+  var deltas = [];
+  var vibrandoDesde = null;
+  var quietoDesde = null;
+  var ultimaLectura = 0;
+  var armado = false;
+
+  function procesarNivel(nivel) {
+    ultimaLectura = nivel;
+    var pct = Math.min(100, (nivel / (umbral * 2)) * 100);
+    els.meterFill.style.width = pct + '%';
+    els.meterFill.classList.toggle('over', nivel > umbral);
+
+    if (!armado) return;
+    var ahora = Date.now();
+
+    if (nivel > umbral) {
+      quietoDesde = null;
+      if (vibrandoDesde === null) vibrandoDesde = ahora;
+      var llevaMoviendo = ahora - vibrandoDesde;
+      if (llevaMoviendo > sostenActivo) {
+        if (fase === 'esperando') iniciarProduccion();
+        else if (fase === 'interrupcion') reanudarProduccion();
+        else if (fase === 'parado_sin_causa') { fase = 'activo'; registrarLog('↩ Falsa alarma, sigue igual'); pintarEstado(); }
+      }
+    } else {
+      vibrandoDesde = null;
+      if (quietoDesde === null) quietoDesde = ahora;
+      var llevaQuieto = ahora - quietoDesde;
+      if (llevaQuieto > sostenParado && fase === 'activo') {
+        detectarParada();
+      }
+    }
+  }
+
+  function onDeviceMotion(e) {
+    var a = e.accelerationIncludingGravity;
+    if (!a || a.x === null) return;
+    var mag = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    if (lastMag !== null) {
+      var delta = Math.abs(mag - lastMag);
+      deltas.push(delta);
+      if (deltas.length > 8) deltas.shift();
+      var avg = deltas.reduce(function (s, v) { return s + v; }, 0) / deltas.length;
+      procesarNivel(avg);
+      recibioLectura = true;
+    }
+    lastMag = mag;
+  }
+
+  var recibioLectura = false;
+  window.addEventListener('devicemotion', onDeviceMotion);
+
+  setTimeout(function () {
+    if (armado && !recibioLectura) {
+      els.avisoSinSensor.classList.add('visible');
+    }
+  }, 3000);
+
+  // Botón "simular" para calibrar sin la herramienta encendida (o como respaldo en vivo).
+  var simTimer = null;
+  function simularOn() {
+    simTimer = setInterval(function () { procesarNivel(umbral * 1.8); }, 60);
+  }
+  function simularOff() {
+    clearInterval(simTimer);
+    procesarNivel(0);
+  }
+  els.btnSimular.addEventListener('mousedown', simularOn);
+  els.btnSimular.addEventListener('touchstart', function (ev) { ev.preventDefault(); simularOn(); });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(function (ev) {
+    els.btnSimular.addEventListener(ev, simularOff);
+  });
+
+  els.btnArmar.addEventListener('click', function () {
+    if (armado) {
+      armado = false;
+      fase = 'apagado';
+      segmento = null;
+      els.btnArmar.textContent = '▶ Armar sensor';
+      els.btnArmar.classList.remove('armado');
+      els.avisoSinSensor.classList.remove('visible');
+      pintarEstado();
+      return;
+    }
+
+    function activar() {
+      armado = true;
+      fase = 'esperando';
+      recibioLectura = false;
+      els.btnArmar.textContent = '⏹ Apagar sensor';
+      els.btnArmar.classList.add('armado');
+      pintarEstado();
+      setTimeout(function () {
+        if (armado && !recibioLectura) els.avisoSinSensor.classList.add('visible');
+      }, 3000);
+    }
+
+    // iOS 13+ exige pedir permiso con un toque del usuario; Android no tiene este método.
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().then(function (resp) {
+        if (resp === 'granted') activar();
+        else registrarLog('❌ Permiso de movimiento denegado', true);
+      }).catch(function () { activar(); });
+    } else {
+      activar();
+    }
+  });
+
+  pintarEstado();
+})();
+</script>

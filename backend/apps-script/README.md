@@ -30,18 +30,11 @@
 1. En el Sheet: `Extensiones > Apps Script`.
 2. Borra el contenido de `Code.gs` y pega el archivo `Code.gs` de esta carpeta.
 
-## 3. Configurar las API keys de IA (Groq + NVIDIA como respaldo)
+## 3. Configurar Groq
 
-El backend prueba los proveedores en orden: **Groq primero, NVIDIA después,
-y si ambos fallan, un clasificador por palabras clave** (nunca se cae del
-todo). Cada uno se activa solo con tener su propiedad configurada; puedes
-tener solo Groq, solo NVIDIA, o los dos.
-
-### Groq (recomendado, el que usa la demo)
-
-Groq corre modelos open source (Llama, Gemma, Mixtral) sobre hardware propio
-(LPU), no sobre GPUs compartidas como NVIDIA NIM gratis: responde típicamente
-en **menos de 1 segundo**, sin la cola variable (2-40 s) que tiene NVIDIA.
+Groq es el único proveedor remoto. Se configuró para que el pitch no
+dependa de una segunda cola de inferencia: si la API no responde, el backend
+usa de inmediato el clasificador local por palabras clave.
 
 1. Ve a https://console.groq.com → crea una cuenta gratis (con Google es
    inmediato) → **API Keys** → **Create API Key**. Copia la key (empieza
@@ -50,37 +43,28 @@ en **menos de 1 segundo**, sin la cola variable (2-40 s) que tiene NVIDIA.
    proyecto) → **Propiedades del script** → Añadir propiedad:
    - Propiedad: `GROQ_API_KEY`
    - Valor: tu API key
-3. El modelo por defecto es `llama-3.3-70b-versatile`. Si Groq cambia su
-   catálogo, se puede sobreescribir sin tocar código con una propiedad
-   `GROQ_MODEL` (ver https://console.groq.com/docs/models para los vigentes).
+3. El modelo por defecto es `openai/gpt-oss-20b`. **No todas las cuentas de
+   Groq tienen acceso a los mismos modelos**: si `probarIA()` muestra HTTP 404,
+   el modelo configurado no está habilitado para esa cuenta/key, no es un
+   problema de la key en sí. Para ver los modelos que SÍ tiene tu cuenta,
+   pega tu key:
+   ```bash
+   curl -s -H "Authorization: Bearer TU_KEY" https://api.groq.com/openai/v1/models
+   ```
+   Puedes sobreescribir el modelo sin tocar código con una propiedad del
+   script `GROQ_MODEL` (no necesita nueva versión del despliegue, se lee al
+   vuelo).
 
-### NVIDIA (respaldo, opcional)
+### Si Groq no está configurado o falla
 
-1. Ve a https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b (crea
-   cuenta gratis si te la pide) y en la sección "Prototype" da clic en
-   **Generate API Key**. Copia la key (empieza con `nvapi-`).
-   - El endpoint gratis de NVIDIA es una cola compartida: puede tardar entre
-     2 y 40+ segundos según la hora. Por eso va como respaldo detrás de Groq,
-     no como principal.
-2. Añade la propiedad `NVIDIA_API_KEY` igual que arriba.
-3. El modelo por defecto es `nvidia/nemotron-3.5-lightning-30b-a3b` (los
-   otros modelos "gratis" del catálogo de NVIDIA dieron 404/410 al probarlos
-   con esta cuenta); se puede cambiar con una propiedad `NVIDIA_MODEL` sin
-   tocar código. La función `compararModelosNVIDIA()` en el editor prueba
-   varios candidatos y dice cuál responde.
-
-### Si no configuras ninguna
-
-El sistema no se cae: usa el clasificador de respaldo por palabras clave
-(`clasificarPorPalabrasClave`) para no perder la demo. La columna `Confianza`
-del Sheet dirá `baja (heurística sin IA)` en ese caso.
+El sistema no se cae: usa `clasificarPorPalabrasClave` y marca la columna
+`Confianza` como `baja (heurística sin IA)`.
 
 ### Antes de la demo
 
-Ejecuta `probarIA()` desde el editor: prueba TODOS los proveedores
-configurados (no solo el primero) y dice cuánto tarda cada uno y si
-clasifica bien, para confirmar que el respaldo también funciona por si Groq
-llegara a fallar en pleno pitch.
+Ejecuta `probarIA()` desde el editor para confirmar la latencia de Groq. No
+debes volver a configurar el proveedor retirado: si aún existe su propiedad
+en el proyecto, ejecuta una vez `eliminarConfiguracionIAObsoleta()`.
 
 ## 4. Publicar como Web App
 
@@ -119,3 +103,29 @@ curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\
 
 Deberías ver la(s) fila(s) nueva(s) en el Sheet y una respuesta JSON con la
 `categoria` del segmento que quedó abierto (si abriste uno).
+
+## 6. Limpiar únicamente las pruebas de latencia
+
+Si se ejecutaron pruebas reales de IA con el identificador `PRUEBA-LATENCIA`
+u OPs que comienzan por `TEST-LAT-`:
+
+1. Abre **Extensiones → Apps Script**.
+2. En el desplegable de funciones elige `limpiarPruebasLatencia`.
+3. Presiona **Ejecutar**.
+4. Revisa el registro: indicará cuántas filas eliminó.
+
+La función es selectiva: no borra los datosdemo que se usan en el pitch.
+También puedes filtrar la hoja por `Nombre_Empleado = PRUEBA-LATENCIA` y
+eliminar esas filas manualmente.
+
+## 7. Mini tablero de analítica dentro de la app
+
+Después de actualizar `Code.gs`, crea una **nueva versión** de la
+implementación web. El botón **Resumen** de la app consultará
+`GET ?action=resumen&cedula=...&maquina=...` y mostrará únicamente filas
+`Cierre` del operario en la máquina seleccionada. Ya tienen horas
+consolidadas: eficiencia, tiempo improductivo, paradas y causas principales.
+No ejecuta IA para generar este resumen.
+
+La operación en vivo consulta únicamente Groq; si no responde, cae de
+inmediato al clasificador local por palabras clave.

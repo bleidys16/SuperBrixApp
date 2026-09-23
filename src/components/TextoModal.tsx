@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -20,9 +22,12 @@ interface Props {
 }
 
 /**
- * Modal de texto libre. El TextInput multiline de Android ya trae el botón
- * de dictado por voz en el teclado del sistema, así que no se necesita
- * ninguna librería extra para cumplir "captura por voz".
+ * Overlay de texto libre. A propósito NO usa el <Modal> de React Native: en
+ * Android el Modal abre una ventana nativa separada que no participa del
+ * ajuste de teclado del KeyboardAvoidingView de la pantalla que lo llama, así
+ * que el teclado terminaba tapando el campo de texto sin dejar ver lo que se
+ * escribía. Al ser una vista normal dentro del mismo árbol que CapturaScreen,
+ * hereda su mismo comportamiento de teclado.
  */
 export default function TextoModal({
   visible,
@@ -34,6 +39,21 @@ export default function TextoModal({
   const insets = useSafeAreaInsets();
   const [texto, setTexto] = useState('');
 
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android') {
+      return;
+    }
+    const suscripcion = BackHandler.addEventListener('hardwareBackPress', () => {
+      onCancelar();
+      return true;
+    });
+    return () => suscripcion.remove();
+  }, [visible, onCancelar]);
+
+  if (!visible) {
+    return null;
+  }
+
   const confirmar = () => {
     if (!texto.trim()) {
       return;
@@ -43,9 +63,23 @@ export default function TextoModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={styles.overlay}>
-        <View style={[styles.card, { paddingBottom: Math.max(insets.bottom, SPACE.xl) }]}>
+    <View style={styles.overlayAbs} pointerEvents="box-none">
+      <Pressable
+        style={styles.fondo}
+        accessibilityLabel="Cerrar"
+        onPress={onCancelar}
+      />
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <View
+          style={[
+            styles.card,
+            { paddingBottom: Math.max(insets.bottom, SPACE.xl) },
+          ]}
+        >
           <View style={styles.manija} />
           <Text style={styles.titulo}>{titulo}</Text>
           <TextInput
@@ -56,10 +90,13 @@ export default function TextoModal({
             autoFocus
             value={texto}
             onChangeText={setTexto}
+            selectionColor={COLOR.brand}
           />
           <View style={styles.hintFila}>
             <Icon name="mic" size={14} color={COLOR.textFaint} />
-            <Text style={styles.hint}>Usa el micrófono del teclado para dictar en vez de escribir</Text>
+            <Text style={styles.hint}>
+              Usa el micrófono del teclado para dictar en vez de escribir
+            </Text>
           </View>
           <View style={styles.botones}>
             <Pressable
@@ -67,27 +104,53 @@ export default function TextoModal({
               onPress={() => {
                 setTexto('');
                 onCancelar();
-              }}>
+              }}
+            >
               <Text style={styles.botonTextoCancelar}>Cancelar</Text>
             </Pressable>
             <Pressable
-              style={[styles.boton, styles.botonConfirmar, !texto.trim() && styles.botonDeshabilitado]}
+              style={[
+                styles.boton,
+                styles.botonConfirmar,
+                !texto.trim() && styles.botonDeshabilitado,
+              ]}
               disabled={!texto.trim()}
-              onPress={confirmar}>
-              <Icon name="send" size={16} color="#ffffff" style={{ marginRight: SPACE.xs }} />
+              onPress={confirmar}
+            >
+              <Icon
+                name="send"
+                size={16}
+                color="#ffffff"
+                style={{ marginRight: SPACE.xs }}
+              />
               <Text style={styles.botonTexto}>Enviar</Text>
             </Pressable>
           </View>
         </View>
-      </View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  overlayAbs: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
+  },
+  fondo: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(10, 8, 5, 0.6)',
+  },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 8, 5, 0.6)',
     justifyContent: 'flex-end',
   },
   card: {
@@ -112,9 +175,15 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: SPACE.lg,
   },
-  titulo: { fontSize: 18, fontWeight: '700', color: COLOR.text, marginBottom: SPACE.md },
+  titulo: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLOR.text,
+    marginBottom: SPACE.md,
+  },
   input: {
     minHeight: 90,
+    maxHeight: 130,
     borderWidth: 1,
     borderColor: COLOR.border,
     backgroundColor: COLOR.bgElevated,
@@ -124,9 +193,19 @@ const styles = StyleSheet.create({
     color: COLOR.text,
     textAlignVertical: 'top',
   },
-  hintFila: { flexDirection: 'row', alignItems: 'center', gap: SPACE.xs, marginTop: SPACE.sm },
+  hintFila: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xs,
+    marginTop: SPACE.sm,
+  },
   hint: { fontSize: 12, color: COLOR.textFaint, flexShrink: 1 },
-  botones: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: SPACE.lg, gap: SPACE.sm },
+  botones: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: SPACE.lg,
+    gap: SPACE.sm,
+  },
   boton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -134,7 +213,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.lg,
     borderRadius: RADIUS.sm,
   },
-  botonCancelar: { backgroundColor: COLOR.bgElevated, borderWidth: 1, borderColor: COLOR.border },
+  botonCancelar: {
+    backgroundColor: COLOR.bgElevated,
+    borderWidth: 1,
+    borderColor: COLOR.border,
+  },
   botonConfirmar: { backgroundColor: COLOR.brand },
   botonDeshabilitado: { opacity: 0.4 },
   botonTexto: { color: '#ffffff', fontWeight: '700' },

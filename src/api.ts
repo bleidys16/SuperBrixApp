@@ -31,6 +31,36 @@ export interface RespuestaBackend {
   ok: boolean;
   categoria?: string;
   confianza?: string;
+  proveedor?: string;
+  tiempoClasificacionMs?: number;
+  error?: string;
+}
+
+export interface ResumenCausa {
+  categoria: string;
+  horas: number;
+  eventos: number;
+}
+
+export interface ResumenOperativo {
+  cedula: string;
+  maquina: string;
+  totalHoras: number;
+  horasProductivas: number;
+  horasImproductivas: number;
+  eficiencia: number;
+  totalParadas: number;
+  operacionesRegistradas: number;
+  topCausa: ResumenCausa | null;
+  porCausa: ResumenCausa[];
+  registrosConsiderados: number;
+  actualizadoEn: string;
+}
+
+interface RespuestaResumen {
+  ok: boolean;
+  resumen?: ResumenOperativo;
+  msg?: string;
   error?: string;
 }
 
@@ -65,7 +95,14 @@ async function intentarEnvio(
   }
 }
 
-const INTENTOS = [15000, 25000, 30000]; // ms, cada intento espera más por si la red está lenta
+// Solo 2 intentos, con timeouts generosos: el backend hace de-dup por
+// eventId pero si el primer intento se cancela por un timeout corto mientras
+// Groq/Sheets todavía está respondiendo, el backend queda "en proceso" y el
+// reintento se pone a esperar esa misma respuesta hasta 55 s (ver Code.gs).
+// Timeouts cortos y muchos intentos multiplicaban esa espera en cascada en
+// vez de evitarla. Con timeouts largos, casi siempre basta el primer intento.
+const INTENTOS = [15000, 20000];
+const PAUSA_ENTRE_INTENTOS_MS = 2000;
 
 /**
  * Apps Script a veces responde con una redirección que el cliente móvil no
@@ -82,10 +119,40 @@ export async function enviarEvento(evento: ReporteEvento): Promise<RespuestaBack
       if (i === INTENTOS.length - 1) {
         break;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+      await new Promise<void>((resolve) => setTimeout(resolve, PAUSA_ENTRE_INTENTOS_MS));
     }
   }
   throw new Error(
     'No se pudo confirmar el envío después de varios intentos. Es probable que sí se haya guardado: revisa antes de repetirlo.',
   );
+}
+
+/** Lee el resumen del operario en la máquina seleccionada, sin ejecutar IA. */
+export async function obtenerResumenOperativo(
+  cedula: string,
+  maquina: string,
+): Promise<ResumenOperativo> {
+  const url = `${API_URL}?action=resumen&cedula=${encodeURIComponent(cedula)}&maquina=${encodeURIComponent(maquina)}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const respuesta = await fetch(url, { signal: controller.signal });
+    if (!respuesta.ok) {
+      throw new Error(`Error al cargar el resumen: ${respuesta.status}`);
+    }
+    const json = (await respuesta.json()) as RespuestaResumen;
+    if (!json.ok || !json.resumen) {
+      throw new Error(
+        'El backend todavía no tiene habilitado el resumen. Actualiza Code.gs y crea una nueva versión de la implementación.',
+      );
+    }
+    return json.resumen;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('El resumen tardó demasiado. Revisa la conexión e inténtalo otra vez.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }

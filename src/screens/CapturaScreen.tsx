@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,19 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  KeyboardAvoidingView,
+  Keyboard,
+  Platform,
   Image,
+  type ScrollViewInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Operario, guardarMaquina, obtenerMaquina } from '../storage';
-import { enviarEvento } from '../api';
+import { enviarEvento, ReporteEvento, RespuestaBackend } from '../api';
 import TextoModal from '../components/TextoModal';
 import BannerClasificacion from '../components/BannerClasificacion';
+import ResumenScreen from './ResumenScreen';
 import { colorCategoria } from '../categorias';
 import { COLOR, RADIUS, SPACE } from '../theme';
 import { dictarAudio } from '../nativo/voz';
@@ -27,6 +32,7 @@ interface Props {
 }
 
 interface SegmentoActivo {
+  id: number;
   op: string;
   maquina: string;
   categoria: string;
@@ -49,11 +55,68 @@ const CATEGORIA_AUSENCIA = 'Ausencia del Operario / Descanso';
 
 // Respaldo rápido al reportar novedad: si el operario no quiere hablar o la
 // IA falla, un toque directo — sin pasar por texto ni por la IA.
-const CAUSAS_RAPIDAS: Array<{ categoria: string; icono: string; etiqueta: string }> = [
-  { categoria: 'Falla Técnica / Mantenimiento', icono: 'build', etiqueta: 'Falla técnica' },
-  { categoria: 'Espera de Materiales / Logística', icono: 'local-shipping', etiqueta: 'Espera material' },
+const CAUSAS_RAPIDAS: Array<{
+  categoria: string;
+  icono: string;
+  etiqueta: string;
+}> = [
+  {
+    categoria: 'Falla Técnica / Mantenimiento',
+    icono: 'build',
+    etiqueta: 'Falla técnica',
+  },
+  {
+    categoria: 'Espera de Materiales / Logística',
+    icono: 'local-shipping',
+    etiqueta: 'Espera material',
+  },
   { categoria: CATEGORIA_SETUP, icono: 'settings', etiqueta: 'Setup' },
 ];
+
+function clasificarTextoLocal(texto: string): {
+  categoria: string;
+  confianza: string;
+} {
+  const t = texto.toLowerCase();
+  if (
+    /baño|sanitario|tomar agua|descanso|pausa activa|me ausento|permiso/.test(t)
+  ) {
+    return { categoria: CATEGORIA_AUSENCIA, confianza: 'preliminar' };
+  }
+  if (
+    /tornillo|tuerca|arandela|perno|bul[oó]n|broca|insumo|material|pieza|herramienta|gr[úu]a|montacargas|falta|falt[oó]|faltan|est[aá] esperando|no han tra[íi]do|no lleg[oó]|no hay/.test(
+      t,
+    )
+  ) {
+    return {
+      categoria: 'Espera de Materiales / Logística',
+      confianza: 'preliminar',
+    };
+  }
+  if (
+    /falla|ruido|eléctrico|fuga|mantenimiento|dañad|no enciende|se apagó/.test(
+      t,
+    )
+  ) {
+    return {
+      categoria: 'Falla Técnica / Mantenimiento',
+      confianza: 'preliminar',
+    };
+  }
+  if (/calidad|inspección|visto bueno|metrología|plano aprobado/.test(t)) {
+    return { categoria: 'Calidad y Aprobación', confianza: 'preliminar' };
+  }
+  if (/alistamiento|calibr|ajuste|matriz|mordaza|setup|montaje/.test(t)) {
+    return { categoria: CATEGORIA_SETUP, confianza: 'preliminar' };
+  }
+  if (/duda|reunión|supervisor|plano|coordinación/.test(t)) {
+    return {
+      categoria: 'Instrucciones / Coordinación',
+      confianza: 'preliminar',
+    };
+  }
+  return { categoria: 'Instrucciones / Coordinación', confianza: 'preliminar' };
+}
 
 function mensajeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -102,7 +165,8 @@ function BotonAccion({
         estiloExtra,
       ]}
       disabled={disabled}
-      onPress={onPress}>
+      onPress={onPress}
+    >
       <Icon
         name={icono}
         size={variante === 'terciaria' ? 16 : 20}
@@ -115,7 +179,8 @@ function BotonAccion({
           variante === 'terciaria' && styles.botonTextoTerciaria,
           { color: colorContenido },
         ]}
-        numberOfLines={2}>
+        numberOfLines={2}
+      >
         {texto}
       </Text>
     </Pressable>
@@ -124,18 +189,31 @@ function BotonAccion({
 
 export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const [op, setOp] = useState('');
   const [maquina, setMaquina] = useState('');
   const [segmento, setSegmento] = useState<SegmentoActivo | null>(null);
-  const [enviando, setEnviando] = useState(false);
-  const [clasificandoIA, setClasificandoIA] = useState(false);
-  const [modalVisible, setModalVisible] = useState<'inicio' | 'novedad' | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [iaPendiente, setIaPendiente] = useState(false);
+  const [modalVisible, setModalVisible] = useState<'inicio' | 'novedad' | null>(
+    null,
+  );
+  const [resumenVisible, setResumenVisible] = useState(false);
   const [elapsedLabel, setElapsedLabel] = useState('00:00');
-  const [clasificacion, setClasificacion] = useState<{ categoria: string; confianza: string } | null>(null);
+  const [clasificacion, setClasificacion] = useState<{
+    categoria: string;
+    confianza: string;
+  } | null>(null);
+  const siguienteSegmentoId = useRef(1);
+  const colaSync = useRef<Promise<void>>(Promise.resolve());
+  const pendientesSync = useRef(0);
+  const pendientesIA = useRef(0);
+  const maquinaResumen = segmento?.maquina || maquina;
 
   // --- Captura de OP por Voz (Flujo 100% Sin Escritura) ---
   const [escuchandoOp, setEscuchandoOp] = useState(false);
   const [modoTecladoOp, setModoTecladoOp] = useState(false);
+  const [opPorVoz, setOpPorVoz] = useState(false);
 
   useEffect(() => {
     obtenerMaquina().then(setMaquina);
@@ -149,11 +227,14 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   async function capturarOpPorVoz() {
     setEscuchandoOp(true);
     try {
-      const texto = await dictarAudio('Di el número de la orden de producción (ej. 62611)');
+      const texto = await dictarAudio(
+        'Di el número de la orden de producción (ej. 62611)',
+      );
       const numero = extraerNumeroOp(texto);
       if (numero) {
         setOp(numero);
         setModoTecladoOp(false);
+        setOpPorVoz(true);
       } else {
         Alert.alert(
           'No se reconoció un número de OP',
@@ -173,11 +254,17 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   /** Valida OP y máquina antes de abrir un segmento nuevo. */
   function datosCompletos(): boolean {
     if (!op.trim()) {
-      Alert.alert('Falta la OP', 'Dicta el número de orden de producción usando el botón de audio.');
+      Alert.alert(
+        'Falta la OP',
+        'Dicta el número de orden de producción usando el botón de audio.',
+      );
       return false;
     }
     if (!maquina) {
-      Alert.alert('Falta la máquina', 'Toca la máquina o puesto donde vas a trabajar.');
+      Alert.alert(
+        'Falta la máquina',
+        'Toca la máquina o puesto donde vas a trabajar.',
+      );
       return false;
     }
     return true;
@@ -196,145 +283,194 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
     return () => clearInterval(id);
   }, [segmento]);
 
-  const horasSegmentoActual = () =>
-    segmento ? (Date.now() - segmento.inicioMs) / 1000 / 3600 : undefined;
-
-  async function iniciarConCategoria(categoria: string) {
-    if (!datosCompletos()) {
-      return;
-    }
-    setEnviando(true);
-    try {
-      await enviarEvento({
-        cedula: operario.cedula,
-        nombre: operario.nombre,
-        op: op.trim(),
-        maquina,
-        abreNuevoSegmento: true,
-        categoria,
-      });
-      setSegmento({ op: op.trim(), maquina, categoria, inicioMs: Date.now() });
-    } catch (err) {
-      Alert.alert('Error de conexión', mensajeError(err));
-    } finally {
-      setEnviando(false);
-    }
+  function crearSegmentoLocal(
+    categoria: string,
+    actual?: SegmentoActivo | null,
+  ): SegmentoActivo {
+    siguienteSegmentoId.current += 1;
+    return {
+      id: siguienteSegmentoId.current,
+      op: actual?.op || op.trim(),
+      maquina: actual?.maquina || maquina,
+      categoria,
+      inicioMs: Date.now(),
+    };
   }
 
-  async function iniciarConTexto(texto: string) {
-    setModalVisible(null);
-    if (!datosCompletos()) {
-      return;
+  function sincronizarEnSegundoPlano(
+    evento: ReporteEvento,
+    alResponder?: (respuesta: RespuestaBackend) => void,
+    clasificaConIA = false,
+  ) {
+    pendientesSync.current += 1;
+    setSincronizando(true);
+    if (clasificaConIA) {
+      pendientesIA.current += 1;
+      setIaPendiente(true);
     }
-    setEnviando(true);
-    setClasificandoIA(true);
-    try {
-      const resp = await enviarEvento({
+
+    colaSync.current = colaSync.current
+      .catch(() => undefined)
+      .then(() => enviarEvento(evento))
+      .then(respuesta => {
+        if (alResponder) alResponder(respuesta);
+      })
+      .catch(err => {
+        // Si se agotaron los reintentos, este evento NO quedó en Sheets.
+        // Antes esto se descartaba en silencio y el operario nunca se
+        // enteraba de que faltaba una fila. Ahora se avisa y se puede
+        // reintentar sin perder el registro.
+        Alert.alert(
+          'No se guardó en Sheets',
+          `${mensajeError(err)}\n\nEl registro sigue en el celular. Revisa la conexión y toca "Reintentar".`,
+          [
+            { text: 'Descartar', style: 'destructive' },
+            {
+              text: 'Reintentar',
+              onPress: () => sincronizarEnSegundoPlano(evento, alResponder, clasificaConIA),
+            },
+          ],
+        );
+      })
+      .finally(() => {
+        pendientesSync.current = Math.max(0, pendientesSync.current - 1);
+        setSincronizando(pendientesSync.current > 0);
+        if (clasificaConIA) {
+          pendientesIA.current = Math.max(0, pendientesIA.current - 1);
+          setIaPendiente(pendientesIA.current > 0);
+        }
+      });
+  }
+
+  function iniciarConCategoria(categoria: string) {
+    if (!datosCompletos()) return;
+    const nuevoSegmento = crearSegmentoLocal(categoria);
+    setSegmento(nuevoSegmento);
+    sincronizarEnSegundoPlano({
+      cedula: operario.cedula,
+      nombre: operario.nombre,
+      op: nuevoSegmento.op,
+      maquina: nuevoSegmento.maquina,
+      abreNuevoSegmento: true,
+      categoria,
+    });
+  }
+
+  function iniciarConTexto(texto: string) {
+    setModalVisible(null);
+    if (!datosCompletos()) return;
+    const preliminar = clasificarTextoLocal(texto);
+    const nuevoSegmento = crearSegmentoLocal(preliminar.categoria);
+    setSegmento(nuevoSegmento);
+    sincronizarEnSegundoPlano(
+      {
         cedula: operario.cedula,
         nombre: operario.nombre,
-        op: op.trim(),
-        maquina,
+        op: nuevoSegmento.op,
+        maquina: nuevoSegmento.maquina,
         abreNuevoSegmento: true,
         texto,
-      });
-      setSegmento({
-        op: op.trim(),
-        maquina,
-        categoria: resp.categoria || 'Producción Activa',
-        inicioMs: Date.now(),
-      });
-      if (resp.categoria) {
-        setClasificacion({ categoria: resp.categoria, confianza: resp.confianza || '' });
-      }
-    } catch (err) {
-      Alert.alert('Error de conexión', mensajeError(err));
-    } finally {
-      setEnviando(false);
-      setClasificandoIA(false);
-    }
+      },
+      respuesta => {
+        if (respuesta.proveedor !== 'groq' || !respuesta.categoria) return;
+        setSegmento(actual =>
+          actual?.id === nuevoSegmento.id
+            ? {
+                ...actual,
+                categoria: respuesta.categoria || preliminar.categoria,
+              }
+            : actual,
+        );
+        setClasificacion({
+          categoria: respuesta.categoria,
+          confianza: respuesta.confianza || '',
+        });
+      },
+      true,
+    );
   }
 
-  async function reportarNovedad(texto: string) {
+  function reportarNovedad(texto: string) {
     setModalVisible(null);
-    if (!segmento) {
-      return;
-    }
-    setEnviando(true);
-    setClasificandoIA(true);
-    try {
-      const resp = await enviarEvento({
+    if (!segmento) return;
+    const anterior = segmento;
+    const preliminar = clasificarTextoLocal(texto);
+    const nuevoSegmento = crearSegmentoLocal(preliminar.categoria, anterior);
+    setSegmento(nuevoSegmento);
+    sincronizarEnSegundoPlano(
+      {
         cedula: operario.cedula,
         nombre: operario.nombre,
-        op: segmento.op,
-        maquina: segmento.maquina,
-        categoriaCerrada: segmento.categoria,
-        horasCerradas: horasSegmentoActual(),
+        op: anterior.op,
+        maquina: anterior.maquina,
+        categoriaCerrada: anterior.categoria,
+        horasCerradas: (Date.now() - anterior.inicioMs) / 1000 / 3600,
         abreNuevoSegmento: true,
         texto,
-      });
-      const nuevaCategoria = resp.categoria || 'Instrucciones / Coordinación';
-      setSegmento({ ...segmento, categoria: nuevaCategoria, inicioMs: Date.now() });
-      setClasificacion({ categoria: nuevaCategoria, confianza: resp.confianza || '' });
-    } catch (err) {
-      Alert.alert('Error de conexión', mensajeError(err));
-    } finally {
-      setEnviando(false);
-      setClasificandoIA(false);
-    }
+      },
+      respuesta => {
+        if (respuesta.proveedor !== 'groq' || !respuesta.categoria) return;
+        setSegmento(actual =>
+          actual?.id === nuevoSegmento.id
+            ? {
+                ...actual,
+                categoria: respuesta.categoria || preliminar.categoria,
+              }
+            : actual,
+        );
+        setClasificacion({
+          categoria: respuesta.categoria,
+          confianza: respuesta.confianza || '',
+        });
+      },
+      true,
+    );
   }
 
-  async function cambiarCategoriaSegmento(categoria: string) {
-    if (!segmento) {
-      return;
-    }
-    setEnviando(true);
-    try {
-      await enviarEvento({
-        cedula: operario.cedula,
-        nombre: operario.nombre,
-        op: segmento.op,
-        maquina: segmento.maquina,
-        categoriaCerrada: segmento.categoria,
-        horasCerradas: horasSegmentoActual(),
-        abreNuevoSegmento: true,
-        categoria,
-      });
-      setSegmento({ ...segmento, categoria, inicioMs: Date.now() });
-    } catch (err) {
-      Alert.alert('Error de conexión', mensajeError(err));
-    } finally {
-      setEnviando(false);
-    }
+  function cambiarCategoriaSegmento(categoria: string) {
+    if (!segmento) return;
+    const anterior = segmento;
+    const nuevoSegmento = crearSegmentoLocal(categoria, anterior);
+    setSegmento(nuevoSegmento);
+    sincronizarEnSegundoPlano({
+      cedula: operario.cedula,
+      nombre: operario.nombre,
+      op: anterior.op,
+      maquina: anterior.maquina,
+      categoriaCerrada: anterior.categoria,
+      horasCerradas: (Date.now() - anterior.inicioMs) / 1000 / 3600,
+      abreNuevoSegmento: true,
+      categoria,
+    });
   }
 
-  async function finalizarOp() {
-    if (!segmento) {
-      return;
-    }
-    setEnviando(true);
-    try {
-      await enviarEvento({
-        cedula: operario.cedula,
-        nombre: operario.nombre,
-        op: segmento.op,
-        maquina: segmento.maquina,
-        categoriaCerrada: segmento.categoria,
-        horasCerradas: horasSegmentoActual(),
-        abreNuevoSegmento: false,
-      });
-      setSegmento(null);
-      setOp('');
-    } catch (err) {
-      Alert.alert('Error de conexión', mensajeError(err));
-    } finally {
-      setEnviando(false);
-    }
+  function finalizarOp() {
+    if (!segmento) return;
+    const anterior = segmento;
+    setSegmento(null);
+    setOp('');
+    sincronizarEnSegundoPlano({
+      cedula: operario.cedula,
+      nombre: operario.nombre,
+      op: anterior.op,
+      maquina: anterior.maquina,
+      categoriaCerrada: anterior.categoria,
+      horasCerradas: (Date.now() - anterior.inicioMs) / 1000 / 3600,
+      abreNuevoSegmento: false,
+    });
   }
 
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       {clasificacion && (
-        <View style={[styles.bannerWrap, { top: insets.top + SPACE.sm }]} pointerEvents="box-none">
+        <View
+          style={[styles.bannerWrap, { top: insets.top + SPACE.sm }]}
+          pointerEvents="box-none"
+        >
           <BannerClasificacion
             categoria={clasificacion.categoria}
             confianza={clasificacion.confianza}
@@ -344,19 +480,55 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
       )}
 
       <ScrollView
+        ref={scrollRef}
         style={styles.container}
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + SPACE.lg }]}
-        keyboardShouldPersistTaps="handled">
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: insets.top + SPACE.lg,
+            paddingBottom: insets.bottom + SPACE.xxl,
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      >
         <View style={styles.header}>
           <View style={styles.headerMarca}>
-            <Image source={require('../assets/logo-isotipo.jpg')} style={styles.logoIsotipo} />
+            <Image
+              source={require('../assets/logo-isotipo.jpg')}
+              style={styles.logoIsotipo}
+            />
             <Text style={styles.marca}>SUPERBRIX</Text>
           </View>
-          <Pressable
-            onPress={onCambiarOperario}
-            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
-            <Text style={styles.cambiar}>Cambiar</Text>
-          </Pressable>
+          <View style={styles.headerAcciones}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Abrir resumen operativo"
+              style={({ pressed }) => [
+                styles.botonResumen,
+                pressed && styles.botonPresionado,
+              ]}
+              onPress={() => {
+                if (!maquinaResumen) {
+                  Alert.alert(
+                    'Selecciona una máquina',
+                    'El resumen analiza únicamente la máquina en la que estás trabajando.',
+                  );
+                  return;
+                }
+                setResumenVisible(true);
+              }}
+            >
+              <Icon name="insights" size={16} color={COLOR.brand} />
+              <Text style={styles.botonResumenTexto}>Resumen</Text>
+            </Pressable>
+            <Pressable
+              onPress={onCambiarOperario}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+            >
+              <Text style={styles.cambiar}>Cambiar</Text>
+            </Pressable>
+          </View>
         </View>
         <View style={styles.headerOperario}>
           <Text style={styles.saludo}>{operario.nombre}</Text>
@@ -368,7 +540,11 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
             <Text style={styles.label}>Orden de producción (OP#)</Text>
 
             {/* --- INGRESO DE OP POR AUDIO (Voz nativa, cero fricción) --- */}
-            {!op.trim() ? (
+            {/* modoTecladoOp mantiene visible el campo mientras se escribe:
+                sin esto, apenas se tecleaba el primer dígito `op` dejaba de
+                estar vacío y la vista saltaba a la tarjeta "confirmada",
+                perdiendo el TextInput a mitad de escritura. */}
+            {!op.trim() || modoTecladoOp ? (
               <View style={styles.opCardVoz}>
                 <Pressable
                   style={({ pressed }) => [
@@ -377,8 +553,14 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                     pressed && styles.botonPresionado,
                   ]}
                   disabled={escuchandoOp}
-                  onPress={capturarOpPorVoz}>
-                  <View style={[styles.iconoVozWrap, escuchandoOp && styles.iconoVozWrapEscuchando]}>
+                  onPress={capturarOpPorVoz}
+                >
+                  <View
+                    style={[
+                      styles.iconoVozWrap,
+                      escuchandoOp && styles.iconoVozWrapEscuchando,
+                    ]}
+                  >
                     <Icon
                       name={escuchandoOp ? 'graphic-eq' : 'mic'}
                       size={28}
@@ -387,7 +569,9 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                   </View>
                   <View style={styles.textoVozWrap}>
                     <Text style={styles.btnVozOpTitulo}>
-                      {escuchandoOp ? 'Escuchando tu voz…' : 'Dictar OP por audio'}
+                      {escuchandoOp
+                        ? 'Escuchando tu voz…'
+                        : 'Dictar OP por audio'}
                     </Text>
                     <Text style={styles.btnVozOpSubtitulo}>
                       {escuchandoOp
@@ -401,25 +585,59 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 {modoTecladoOp ? (
                   <View style={styles.modoTecladoWrap}>
                     <View style={styles.inputConIcono}>
-                      <Icon name="edit" size={18} color={COLOR.textFaint} style={styles.inputIcono} />
+                      <Icon
+                        name="edit"
+                        size={18}
+                        color={COLOR.textFaint}
+                        style={styles.inputIcono}
+                      />
                       <TextInput
                         style={styles.inputTexto}
                         value={op}
-                        onChangeText={setOp}
+                        onChangeText={v => {
+                          setOp(v);
+                          setOpPorVoz(false);
+                        }}
                         placeholder="Escribe la OP (ej. 62611)"
                         placeholderTextColor={COLOR.textFaint}
                         keyboardType="number-pad"
+                        returnKeyType="done"
                         autoFocus
+                        selectionColor={COLOR.brand}
+                        onFocus={() => {
+                          setTimeout(
+                            () =>
+                              scrollRef.current?.scrollTo({
+                                y: 0,
+                                animated: true,
+                              }),
+                            250,
+                          );
+                        }}
+                        onSubmitEditing={() => {
+                          Keyboard.dismiss();
+                          if (op.trim()) setModoTecladoOp(false);
+                        }}
                       />
                     </View>
-                    <Pressable style={styles.linkTeclado} onPress={() => setModoTecladoOp(false)}>
-                      <Text style={styles.linkTecladoTexto}>Ocultar teclado manual</Text>
+                    <Pressable
+                      style={styles.linkTeclado}
+                      onPress={() => setModoTecladoOp(false)}
+                    >
+                      <Text style={styles.linkTecladoTexto}>
+                        Ocultar teclado manual
+                      </Text>
                     </Pressable>
                   </View>
                 ) : (
-                  <Pressable style={styles.linkTeclado} onPress={() => setModoTecladoOp(true)}>
+                  <Pressable
+                    style={styles.linkTeclado}
+                    onPress={() => setModoTecladoOp(true)}
+                  >
                     <Icon name="keyboard" size={14} color={COLOR.textFaint} />
-                    <Text style={styles.linkTecladoTexto}>¿No puedes usar el micrófono? Escribir a mano</Text>
+                    <Text style={styles.linkTecladoTexto}>
+                      ¿No puedes usar el micrófono? Escribir a mano
+                    </Text>
                   </Pressable>
                 )}
               </View>
@@ -428,7 +646,9 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 <View style={styles.opConfirmadaInfo}>
                   <View style={styles.badgeVozWrap}>
                     <Icon name="check-circle" size={14} color={COLOR.success} />
-                    <Text style={styles.opConfirmadaBadge}>Ingresada por voz</Text>
+                    <Text style={styles.opConfirmadaBadge}>
+                      {opPorVoz ? 'Ingresada por voz' : 'Ingresada a mano'}
+                    </Text>
                   </View>
                   <Text style={styles.opConfirmadaNumero}>OP# {op}</Text>
                 </View>
@@ -436,15 +656,27 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                   <Pressable
                     style={styles.opAccionBoton}
                     onPress={capturarOpPorVoz}
-                    disabled={escuchandoOp}>
+                    disabled={escuchandoOp}
+                  >
                     <Icon name="mic" size={16} color={COLOR.brand} />
                     <Text style={styles.opAccionBotonTexto}>Cambiar</Text>
                   </Pressable>
                   <Pressable
                     style={[styles.opAccionBoton, styles.opAccionBorrar]}
-                    onPress={() => setOp('')}>
+                    onPress={() => {
+                      setOp('');
+                      setOpPorVoz(false);
+                    }}
+                  >
                     <Icon name="close" size={16} color={COLOR.textMuted} />
-                    <Text style={[styles.opAccionBotonTexto, { color: COLOR.textMuted }]}>Borrar</Text>
+                    <Text
+                      style={[
+                        styles.opAccionBotonTexto,
+                        { color: COLOR.textMuted },
+                      ]}
+                    >
+                      Borrar
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -452,12 +684,20 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
 
             <Text style={styles.labelConEspacio}>Máquina / puesto</Text>
             <View style={styles.chips}>
-              {MAQUINAS.map((m) => (
+              {MAQUINAS.map(m => (
                 <Pressable
                   key={m}
                   style={[styles.chip, maquina === m && styles.chipActivo]}
-                  onPress={() => elegirMaquina(m)}>
-                  <Text style={[styles.chipTexto, maquina === m && styles.chipTextoActivo]}>{m}</Text>
+                  onPress={() => elegirMaquina(m)}
+                >
+                  <Text
+                    style={[
+                      styles.chipTexto,
+                      maquina === m && styles.chipTextoActivo,
+                    ]}
+                  >
+                    {m}
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -469,7 +709,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               icono="play-arrow"
               texto="Iniciar Producción Activa"
               variante="primaria"
-              disabled={enviando}
               onPress={() => iniciarConCategoria('Producción Activa')}
             />
 
@@ -480,7 +719,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 texto="Setup"
                 variante="secundaria"
                 estiloExtra={styles.mitad}
-                disabled={enviando}
                 onPress={() => iniciarConCategoria(CATEGORIA_SETUP)}
               />
               <BotonAccion
@@ -488,7 +726,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 texto="Otra actividad"
                 variante="secundaria"
                 estiloExtra={styles.mitad}
-                disabled={enviando}
                 onPress={() => setModalVisible('inicio')}
               />
             </View>
@@ -508,10 +745,15 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                     borderColor: colorCategoria(segmento.categoria),
                     backgroundColor: colorCategoria(segmento.categoria) + '1A',
                   },
-                ]}>
+                ]}
+              >
                 <Text
-                  style={[styles.pillCategoriaTexto, { color: colorCategoria(segmento.categoria) }]}
-                  numberOfLines={2}>
+                  style={[
+                    styles.pillCategoriaTexto,
+                    { color: colorCategoria(segmento.categoria) },
+                  ]}
+                  numberOfLines={2}
+                >
                   {segmento.categoria}
                 </Text>
               </View>
@@ -524,7 +766,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               icono="mic"
               texto="Pausar / reportar novedad"
               variante="primaria"
-              disabled={enviando}
               onPress={() => setModalVisible('novedad')}
             />
 
@@ -533,12 +774,12 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               ¿No quieres hablar? Toca la causa directa
             </Text>
             <View style={styles.filaCausasRapidas}>
-              {CAUSAS_RAPIDAS.map((c) => (
+              {CAUSAS_RAPIDAS.map(c => (
                 <Pressable
                   key={c.categoria}
                   style={styles.causaRapida}
-                  disabled={enviando}
-                  onPress={() => cambiarCategoriaSegmento(c.categoria)}>
+                  onPress={() => cambiarCategoriaSegmento(c.categoria)}
+                >
                   <Icon name={c.icono} size={18} color={COLOR.textMuted} />
                   <Text style={styles.causaRapidaTexto} numberOfLines={1}>
                     {c.etiqueta}
@@ -554,7 +795,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 texto="Volví, reanudar Producción Activa"
                 variante="secundaria"
                 estiloExtra={styles.botonConEspacio}
-                disabled={enviando}
                 onPress={() => cambiarCategoriaSegmento('Producción Activa')}
               />
             ) : (
@@ -563,7 +803,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 texto="Salgo un momento"
                 variante="secundaria"
                 estiloExtra={styles.botonConEspacio}
-                disabled={enviando}
                 onPress={() => cambiarCategoriaSegmento(CATEGORIA_AUSENCIA)}
               />
             )}
@@ -576,17 +815,18 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               texto="Finalizar OP"
               variante="terciaria"
               colorTerciaria={COLOR.danger}
-              disabled={enviando}
               onPress={finalizarOp}
             />
           </View>
         )}
 
-        {enviando && (
+        {sincronizando && (
           <View style={styles.esperaWrap}>
-            <ActivityIndicator color={COLOR.brand} />
+            <ActivityIndicator size="small" color={COLOR.brand} />
             <Text style={styles.esperaTexto}>
-              {clasificandoIA ? '🤖 Analizando con IA…' : 'Enviando…'}
+              {iaPendiente
+                ? 'IA actualizando la categoría en segundo plano…'
+                : 'Sincronizando con Sheets…'}
             </Text>
           </View>
         )}
@@ -606,12 +846,18 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         onCancelar={() => setModalVisible(null)}
         onConfirmar={reportarNovedad}
       />
-    </View>
+      <ResumenScreen
+        visible={resumenVisible}
+        operario={operario}
+        maquina={maquinaResumen}
+        onCerrar={() => setResumenVisible(false)}
+      />
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLOR.bg },
+  root: { flex: 1, backgroundColor: '#FAF8F3' },
   container: { flex: 1 },
   scrollContent: {
     paddingHorizontal: SPACE.xl,
@@ -626,8 +872,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerMarca: { flexDirection: 'row', alignItems: 'center', gap: SPACE.xs },
+  headerAcciones: { flexDirection: 'row', alignItems: 'center', gap: SPACE.sm },
   logoIsotipo: { width: 20, height: 20, borderRadius: 5 },
-  marca: { color: COLOR.textFaint, fontSize: 12, fontWeight: '700', letterSpacing: 1.2 },
+  marca: {
+    color: COLOR.textFaint,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+  },
+  botonResumen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: SPACE.sm + 2,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.brandTint,
+    borderWidth: 1,
+    borderColor: '#F4D1AC',
+  },
+  botonResumenTexto: {
+    color: COLOR.brandDark,
+    fontSize: 11,
+    fontWeight: '800',
+  },
   cambiar: { color: COLOR.brand, fontSize: 13, fontWeight: '700' },
   headerOperario: { marginTop: SPACE.sm, marginBottom: SPACE.xl },
   saludo: { color: COLOR.text, fontSize: 20, fontWeight: '800' },
@@ -645,8 +913,19 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.sm },
-  labelConEspacio: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.sm, marginTop: SPACE.xl },
-  subLabelCentrado: { color: COLOR.textFaint, fontSize: 12, textAlign: 'center', marginTop: SPACE.md, marginBottom: SPACE.xs },
+  labelConEspacio: {
+    color: COLOR.textMuted,
+    fontSize: 13,
+    marginBottom: SPACE.sm,
+    marginTop: SPACE.xl,
+  },
+  subLabelCentrado: {
+    color: COLOR.textFaint,
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: SPACE.md,
+    marginBottom: SPACE.xs,
+  },
 
   // --- Estilos de Captura de OP por Voz ---
   opCardVoz: {
@@ -780,8 +1059,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.md,
   },
   inputIcono: { marginRight: SPACE.xs },
-  inputTexto: { flex: 1, paddingVertical: SPACE.md, fontSize: 16, color: COLOR.text },
-  divisor: { height: 1, backgroundColor: COLOR.border, marginVertical: SPACE.xl },
+  inputTexto: {
+    flex: 1,
+    paddingVertical: SPACE.md,
+    fontSize: 16,
+    color: COLOR.text,
+  },
+  divisor: {
+    height: 1,
+    backgroundColor: COLOR.border,
+    marginVertical: SPACE.xl,
+  },
   filaCausasRapidas: { flexDirection: 'row', gap: SPACE.sm },
   causaRapida: {
     flex: 1,
@@ -805,15 +1093,33 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   boton_primaria: { backgroundColor: COLOR.brand },
-  boton_secundaria: { backgroundColor: COLOR.bg, borderWidth: 1.5, borderColor: COLOR.borderStrong },
-  boton_terciaria: { backgroundColor: 'transparent', paddingVertical: SPACE.sm, minHeight: 0 },
+  boton_secundaria: {
+    backgroundColor: COLOR.bg,
+    borderWidth: 1.5,
+    borderColor: COLOR.borderStrong,
+  },
+  boton_terciaria: {
+    backgroundColor: 'transparent',
+    paddingVertical: SPACE.sm,
+    minHeight: 0,
+  },
   botonPresionado: { opacity: 0.75 },
   botonDeshabilitado: { opacity: 0.4 },
   botonConEspacio: { marginTop: SPACE.sm },
   botonIcono: { marginRight: SPACE.sm },
-  botonTexto: { fontWeight: '700', fontSize: 15, flexShrink: 1, textAlign: 'center' },
+  botonTexto: {
+    fontWeight: '700',
+    fontSize: 15,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
   botonTextoTerciaria: { fontSize: 13, fontWeight: '600' },
-  bannerWrap: { position: 'absolute', left: SPACE.xl, right: SPACE.xl, zIndex: 20 },
+  bannerWrap: {
+    position: 'absolute',
+    left: SPACE.xl,
+    right: SPACE.xl,
+    zIndex: 20,
+  },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE.sm },
   chip: {
     flexDirection: 'row',
@@ -841,7 +1147,12 @@ const styles = StyleSheet.create({
   },
   pillCategoriaTexto: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
   maquinaActiva: { color: COLOR.textMuted, fontSize: 14, marginTop: 2 },
-  opActiva: { color: COLOR.text, fontSize: 24, fontWeight: '800', marginTop: 4 },
+  opActiva: {
+    color: COLOR.text,
+    fontSize: 24,
+    fontWeight: '800',
+    marginTop: 4,
+  },
   timer: {
     color: COLOR.text,
     fontSize: 44,

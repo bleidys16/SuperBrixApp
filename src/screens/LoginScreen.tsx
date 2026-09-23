@@ -166,7 +166,7 @@ export default function LoginScreen({ onIngresar }: Props) {
               <Text style={styles.demoBadgeTexto}>DEMO</Text>
             </View>
             <View style={styles.accesoRapidoTitulos}>
-              <Text style={styles.accesoRapidoTitulo}>Accesos rápidos para el pitch</Text>
+              <Text style={styles.accesoRapidoTitulo}>Accesos rápidos</Text>
               <Text style={styles.accesoRapidoSubtitulo}>Toca un operario: solo coloca su cédula y el nombre se completa automáticamente.</Text>
             </View>
           </View>

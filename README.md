@@ -21,9 +21,9 @@ para no obligar al operario a elegir manualmente entre categorías técnicas.
 3. Cuando algo lo detiene, toca **Pausar / reportar novedad** y dicta o
    escribe en lenguaje natural qué pasó (ej. *"paré la fresadora porque estoy
    esperando la broca de 1/2 pulgada"*).
-4. El backend (Google Apps Script) manda ese texto a un modelo de IA (Groq,
-   con NVIDIA NIM como respaldo automático si Groq falla) que lo clasifica en
-   una de las categorías oficiales del reto, y guarda la fila en un Google
+4. El backend (Google Apps Script) manda ese texto a Groq para clasificarlo
+   en una de las categorías oficiales del reto. Si Groq no está disponible,
+   usa un clasificador local por palabras clave y guarda la fila en un Google
    Sheet.
 5. Looker Studio, conectado en vivo a esa hoja, arma el Pareto de causas y los
    demás widgets del dashboard.
@@ -41,8 +41,8 @@ de hacia dónde puede escalar el proyecto (ver "Visión Fase 2" abajo).
 - **App**: React Native 0.87 + TypeScript (CLI nativo, sin Expo).
 - **Backend**: Google Apps Script (`doPost`/`doGet`) sobre Google Sheets como
   base de datos.
-- **IA**: Groq (primario, rápido) con NVIDIA NIM como fallback automático en
-  paralelo; fallback final por palabras clave si ambas fallan.
+- **IA**: Groq como único proveedor remoto, con fallback local por palabras
+  clave para mantener la operación disponible.
 - **Dashboard**: Looker Studio, conectado directo a la Sheet.
 - **Sensor**: módulo nativo Android (Kotlin) propio para el acelerómetro,
   expuesto a JS vía `NativeEventEmitter`.

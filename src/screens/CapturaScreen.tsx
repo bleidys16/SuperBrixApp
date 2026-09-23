@@ -18,7 +18,8 @@ import TextoModal from '../components/TextoModal';
 import BannerClasificacion from '../components/BannerClasificacion';
 import { colorCategoria } from '../categorias';
 import { COLOR, RADIUS, SPACE } from '../theme';
-import { useSensorVibracion, NivelSensibilidad } from '../hooks/useSensorVibracion';
+import { dictarAudio } from '../nativo/voz';
+import { extraerNumeroOp } from '../utils/numeroVoz';
 
 interface Props {
   operario: Operario;
@@ -32,7 +33,7 @@ interface SegmentoActivo {
   inicioMs: number;
 }
 
-// Puestos de trabajo de la planta; se eligen con un toque, sin escribir.
+// Puestos de trabajo de la planta; se eligen con un solo toque, sin escribir.
 const MAQUINAS = [
   'Fresadora CNC',
   'Torno',
@@ -59,13 +60,10 @@ function mensajeError(err: unknown): string {
 }
 
 /**
- * Jerarquía de 3 niveles, para que el ojo sepa de un vistazo cuál es LA
- * acción de ese momento y cuáles son alternativas:
+ * Jerarquía visual de 3 niveles:
  *  - primaria: 1 sola, rellena de naranja, grande. La acción más probable.
- *  - secundaria: contorno, más chica, pensada para ir en fila (no apilada).
+ *  - secundaria: contorno, en fila para no apilar.
  *  - terciaria: texto simple, sin relleno ni borde, separada del resto.
- *    Para acciones raras o de cierre (ej. Finalizar OP) que no deben
- *    competir visualmente con el flujo principal.
  */
 type Variante = 'primaria' | 'secundaria' | 'terciaria';
 
@@ -79,9 +77,21 @@ interface BotonAccionProps {
   estiloExtra?: object;
 }
 
-function BotonAccion({ icono, texto, onPress, disabled, variante = 'primaria', colorTerciaria, estiloExtra }: BotonAccionProps) {
+function BotonAccion({
+  icono,
+  texto,
+  onPress,
+  disabled,
+  variante = 'primaria',
+  colorTerciaria,
+  estiloExtra,
+}: BotonAccionProps) {
   const colorContenido =
-    variante === 'primaria' ? '#ffffff' : variante === 'terciaria' ? colorTerciaria || COLOR.textMuted : COLOR.ink;
+    variante === 'primaria'
+      ? '#ffffff'
+      : variante === 'terciaria'
+      ? colorTerciaria || COLOR.textMuted
+      : COLOR.ink;
   return (
     <Pressable
       style={({ pressed }) => [
@@ -93,7 +103,12 @@ function BotonAccion({ icono, texto, onPress, disabled, variante = 'primaria', c
       ]}
       disabled={disabled}
       onPress={onPress}>
-      <Icon name={icono} size={variante === 'terciaria' ? 16 : 20} color={colorContenido} style={styles.botonIcono} />
+      <Icon
+        name={icono}
+        size={variante === 'terciaria' ? 16 : 20}
+        color={colorContenido}
+        style={styles.botonIcono}
+      />
       <Text
         style={[
           styles.botonTexto,
@@ -107,107 +122,20 @@ function BotonAccion({ icono, texto, onPress, disabled, variante = 'primaria', c
   );
 }
 
-const NIVELES_SENSIBILIDAD: Array<{ valor: NivelSensibilidad; etiqueta: string }> = [
-  { valor: 'suave', etiqueta: 'Suave' },
-  { valor: 'medio', etiqueta: 'Medio' },
-  { valor: 'fuerte', etiqueta: 'Fuerte' },
-];
-
-interface SensorPanelProps {
-  activo: boolean;
-  onToggle: () => void;
-  sensibilidad: NivelSensibilidad;
-  onSensibilidad: (n: NivelSensibilidad) => void;
-  nivel: number;
-  umbral: number;
-  sinLecturas: boolean;
-  estado?: string;
-}
-
-/**
- * Fase 2 del reto (sensores/cámaras) llevada al MVP: usa el acelerómetro
- * real del celular donde ya corre la app — mismo principio de "detectar
- * solo, sin que el operario toque nada", pero sin hardware nuevo.
- */
-function SensorPanel({ activo, onToggle, sensibilidad, onSensibilidad, nivel, umbral, sinLecturas, estado }: SensorPanelProps) {
-  const pct = Math.min(100, (nivel / (umbral * 2)) * 100);
-  return (
-    <View style={styles.sensorPanel}>
-      <Pressable style={styles.sensorFilaToggle} onPress={onToggle}>
-        <Icon name="sensors" size={18} color={activo ? COLOR.brand : COLOR.textMuted} />
-        <Text style={styles.sensorTitulo}>Modo sensor (beta)</Text>
-        <View style={[styles.sensorSwitch, activo && styles.sensorSwitchActivo]}>
-          <View style={[styles.sensorSwitchBola, activo && styles.sensorSwitchBolaActiva]} />
-        </View>
-      </Pressable>
-      {activo && (
-        <View style={styles.sensorCuerpo}>
-          {estado && <Text style={styles.sensorEstado}>{estado}</Text>}
-          <View style={styles.sensorBarraFondo}>
-            <View style={[styles.sensorBarraRelleno, { width: `${pct}%` }, nivel > umbral && styles.sensorBarraSobre]} />
-          </View>
-          {sinLecturas && (
-            <Text style={styles.sensorAviso}>No se detecta el acelerómetro (¿estás en un emulador?)</Text>
-          )}
-          <View style={styles.filaSensibilidad}>
-            {NIVELES_SENSIBILIDAD.map((n) => (
-              <Pressable
-                key={n.valor}
-                style={[styles.chipSensibilidad, sensibilidad === n.valor && styles.chipSensibilidadActivo]}
-                onPress={() => onSensibilidad(n.valor)}>
-                <Text style={[styles.chipSensibilidadTexto, sensibilidad === n.valor && styles.chipTextoActivo]}>
-                  {n.etiqueta}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-      )}
-    </View>
-  );
-}
-
 export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   const insets = useSafeAreaInsets();
   const [op, setOp] = useState('');
   const [maquina, setMaquina] = useState('');
   const [segmento, setSegmento] = useState<SegmentoActivo | null>(null);
   const [enviando, setEnviando] = useState(false);
-  // Aparte de "enviando": solo se prende cuando el texto pasa por la IA, que
-  // puede tardar varios segundos. Sirve para mostrar un mensaje que explique
-  // la espera en vez de dejar solo un spinner sin contexto.
   const [clasificandoIA, setClasificandoIA] = useState(false);
   const [modalVisible, setModalVisible] = useState<'inicio' | 'novedad' | null>(null);
   const [elapsedLabel, setElapsedLabel] = useState('00:00');
   const [clasificacion, setClasificacion] = useState<{ categoria: string; confianza: string } | null>(null);
 
-  // --- Sensor de vibración (Fase 2: sensores + cámaras) -----------------
-  // Detecta solo "vibra / no vibra" con el acelerómetro real del celular.
-  // Es adicional al flujo manual, nunca lo reemplaza: si algo falla o se
-  // apaga, los botones de siempre siguen funcionando exactamente igual.
-  const [modoSensor, setModoSensor] = useState(false);
-  const [sensibilidad, setSensibilidad] = useState<NivelSensibilidad>('suave');
-  const [sensorPidiendoCausa, setSensorPidiendoCausa] = useState(false);
-
-  const { nivel, umbral, sinLecturas } = useSensorVibracion({
-    armado: modoSensor,
-    sensibilidad,
-    onArranque: () => {
-      setSensorPidiendoCausa(false);
-      if (!segmento) {
-        if (datosCompletos()) {
-          iniciarConCategoria('Producción Activa');
-        }
-      } else if (segmento.categoria !== 'Producción Activa') {
-        cambiarCategoriaSegmento('Producción Activa');
-      }
-    },
-    onParada: () => {
-      if (segmento && segmento.categoria === 'Producción Activa') {
-        setSensorPidiendoCausa(true);
-      }
-    },
-  });
+  // --- Captura de OP por Voz (Flujo 100% Sin Escritura) ---
+  const [escuchandoOp, setEscuchandoOp] = useState(false);
+  const [modoTecladoOp, setModoTecladoOp] = useState(false);
 
   useEffect(() => {
     obtenerMaquina().then(setMaquina);
@@ -218,10 +146,34 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
     guardarMaquina(m);
   }
 
+  async function capturarOpPorVoz() {
+    setEscuchandoOp(true);
+    try {
+      const texto = await dictarAudio('Di el número de la orden de producción (ej. 62611)');
+      const numero = extraerNumeroOp(texto);
+      if (numero) {
+        setOp(numero);
+        setModoTecladoOp(false);
+      } else {
+        Alert.alert(
+          'No se reconoció un número de OP',
+          `Escuchamos: "${texto}". Di claramente los dígitos, por ejemplo: "62611" o "seis dos seis once".`,
+        );
+      }
+    } catch (err: unknown) {
+      const mensaje = mensajeError(err);
+      if (!mensaje.includes('cancelado') && !mensaje.includes('CANCELADO')) {
+        Alert.alert('Dictado por voz', mensaje);
+      }
+    } finally {
+      setEscuchandoOp(false);
+    }
+  }
+
   /** Valida OP y máquina antes de abrir un segmento nuevo. */
   function datosCompletos(): boolean {
     if (!op.trim()) {
-      Alert.alert('Falta la OP', 'Escribe el número de orden de producción (OP#).');
+      Alert.alert('Falta la OP', 'Dicta el número de orden de producción usando el botón de audio.');
       return false;
     }
     if (!maquina) {
@@ -372,10 +324,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
       });
       setSegmento(null);
       setOp('');
-      // Se apaga el sensor al cerrar la OP: la próxima OP necesita que el
-      // operario confirme OP/máquina antes de dejar que algo arranque solo.
-      setModoSensor(false);
-      setSensorPidiendoCausa(false);
     } catch (err) {
       Alert.alert('Error de conexión', mensajeError(err));
     } finally {
@@ -385,8 +333,6 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
 
   return (
     <View style={styles.root}>
-      {/* El banner flota sobre todo, pero respeta el notch/barra de estado
-          real del celular (insets.top) en vez de un número fijo a ciegas. */}
       {clasificacion && (
         <View style={[styles.bannerWrap, { top: insets.top + SPACE.sm }]} pointerEvents="box-none">
           <BannerClasificacion
@@ -420,17 +366,89 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         {!segmento ? (
           <View style={styles.card}>
             <Text style={styles.label}>Orden de producción (OP#)</Text>
-            <View style={styles.inputConIcono}>
-              <Icon name="search" size={18} color={COLOR.textFaint} style={styles.inputIcono} />
-              <TextInput
-                style={styles.inputTexto}
-                value={op}
-                onChangeText={setOp}
-                placeholder="Ej. 62611"
-                placeholderTextColor={COLOR.textFaint}
-                keyboardType="number-pad"
-              />
-            </View>
+
+            {/* --- INGRESO DE OP POR AUDIO (Voz nativa, cero fricción) --- */}
+            {!op.trim() ? (
+              <View style={styles.opCardVoz}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.btnVozOp,
+                    escuchandoOp && styles.btnVozOpEscuchando,
+                    pressed && styles.botonPresionado,
+                  ]}
+                  disabled={escuchandoOp}
+                  onPress={capturarOpPorVoz}>
+                  <View style={[styles.iconoVozWrap, escuchandoOp && styles.iconoVozWrapEscuchando]}>
+                    <Icon
+                      name={escuchandoOp ? 'graphic-eq' : 'mic'}
+                      size={28}
+                      color="#ffffff"
+                    />
+                  </View>
+                  <View style={styles.textoVozWrap}>
+                    <Text style={styles.btnVozOpTitulo}>
+                      {escuchandoOp ? 'Escuchando tu voz…' : 'Dictar OP por audio'}
+                    </Text>
+                    <Text style={styles.btnVozOpSubtitulo}>
+                      {escuchandoOp
+                        ? 'Di los números ahora (ej. "62611")'
+                        : 'Toca aquí y di el número de orden'}
+                    </Text>
+                  </View>
+                </Pressable>
+
+                {/* Respaldo de contingencia: solo si no hay micrófono o hay ruido extremo */}
+                {modoTecladoOp ? (
+                  <View style={styles.modoTecladoWrap}>
+                    <View style={styles.inputConIcono}>
+                      <Icon name="edit" size={18} color={COLOR.textFaint} style={styles.inputIcono} />
+                      <TextInput
+                        style={styles.inputTexto}
+                        value={op}
+                        onChangeText={setOp}
+                        placeholder="Escribe la OP (ej. 62611)"
+                        placeholderTextColor={COLOR.textFaint}
+                        keyboardType="number-pad"
+                        autoFocus
+                      />
+                    </View>
+                    <Pressable style={styles.linkTeclado} onPress={() => setModoTecladoOp(false)}>
+                      <Text style={styles.linkTecladoTexto}>Ocultar teclado manual</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable style={styles.linkTeclado} onPress={() => setModoTecladoOp(true)}>
+                    <Icon name="keyboard" size={14} color={COLOR.textFaint} />
+                    <Text style={styles.linkTecladoTexto}>¿No puedes usar el micrófono? Escribir a mano</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : (
+              <View style={styles.opConfirmadaCard}>
+                <View style={styles.opConfirmadaInfo}>
+                  <View style={styles.badgeVozWrap}>
+                    <Icon name="check-circle" size={14} color={COLOR.success} />
+                    <Text style={styles.opConfirmadaBadge}>Ingresada por voz</Text>
+                  </View>
+                  <Text style={styles.opConfirmadaNumero}>OP# {op}</Text>
+                </View>
+                <View style={styles.opConfirmadaAcciones}>
+                  <Pressable
+                    style={styles.opAccionBoton}
+                    onPress={capturarOpPorVoz}
+                    disabled={escuchandoOp}>
+                    <Icon name="mic" size={16} color={COLOR.brand} />
+                    <Text style={styles.opAccionBotonTexto}>Cambiar</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.opAccionBoton, styles.opAccionBorrar]}
+                    onPress={() => setOp('')}>
+                    <Icon name="close" size={16} color={COLOR.textMuted} />
+                    <Text style={[styles.opAccionBotonTexto, { color: COLOR.textMuted }]}>Borrar</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
 
             <Text style={styles.labelConEspacio}>Máquina / puesto</Text>
             <View style={styles.chips}>
@@ -444,25 +462,9 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               ))}
             </View>
 
-            {op.trim() && maquina && (
-              <>
-                <View style={styles.divisor} />
-                <SensorPanel
-                  activo={modoSensor}
-                  onToggle={() => setModoSensor((v) => !v)}
-                  sensibilidad={sensibilidad}
-                  onSensibilidad={setSensibilidad}
-                  nivel={nivel}
-                  umbral={umbral}
-                  sinLecturas={sinLecturas}
-                  estado={modoSensor ? 'Esperando que empieces a trabajar…' : undefined}
-                />
-              </>
-            )}
-
             <View style={styles.divisor} />
 
-            {/* Nivel 1 — primaria: la acción más probable, sola y grande. */}
+            {/* Nivel 1 — primaria: la acción principal de arranque. */}
             <BotonAccion
               icono="play-arrow"
               texto="Iniciar Producción Activa"
@@ -471,7 +473,7 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               onPress={() => iniciarConCategoria('Producción Activa')}
             />
 
-            {/* Nivel 2 — secundarias: alternativas rápidas, en fila para no apilar. */}
+            {/* Nivel 2 — secundarias: alternativas rápidas sin escribir. */}
             <View style={styles.filaSecundarias}>
               <BotonAccion
                 icono="build"
@@ -502,9 +504,14 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               <View
                 style={[
                   styles.pillCategoria,
-                  { borderColor: colorCategoria(segmento.categoria), backgroundColor: colorCategoria(segmento.categoria) + '1A' },
+                  {
+                    borderColor: colorCategoria(segmento.categoria),
+                    backgroundColor: colorCategoria(segmento.categoria) + '1A',
+                  },
                 ]}>
-                <Text style={[styles.pillCategoriaTexto, { color: colorCategoria(segmento.categoria) }]} numberOfLines={2}>
+                <Text
+                  style={[styles.pillCategoriaTexto, { color: colorCategoria(segmento.categoria) }]}
+                  numberOfLines={2}>
                   {segmento.categoria}
                 </Text>
               </View>
@@ -512,25 +519,7 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
 
             <Text style={styles.timer}>{elapsedLabel}</Text>
 
-            <SensorPanel
-              activo={modoSensor}
-              onToggle={() => setModoSensor((v) => !v)}
-              sensibilidad={sensibilidad}
-              onSensibilidad={setSensibilidad}
-              nivel={nivel}
-              umbral={umbral}
-              sinLecturas={sinLecturas}
-              estado={
-                modoSensor
-                  ? segmento.categoria === 'Producción Activa'
-                    ? 'Vigilando — avisa si se detiene'
-                    : 'Detenido — reanuda la herramienta para seguir'
-                  : undefined
-              }
-            />
-            {modoSensor && <View style={styles.divisor} />}
-
-            {/* Nivel 1 — primaria: reportar es la acción central del trabajo. */}
+            {/* Nivel 1 — primaria: reportar novedad por voz. */}
             <BotonAccion
               icono="mic"
               texto="Pausar / reportar novedad"
@@ -538,25 +527,22 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               disabled={enviando}
               onPress={() => setModalVisible('novedad')}
             />
-            {/* Respaldo: si no quiere hablar o la IA falla, un toque directo
-                sin pasar por texto ni por la IA. También es lo que usa el
-                sensor: cuando detecta que la herramienta se detuvo, resalta
-                esto mismo en vez de abrir algo nuevo. */}
-            <Text style={[styles.subLabelCentrado, sensorPidiendoCausa && styles.subLabelSensorActivo]}>
-              {sensorPidiendoCausa ? '🔬 El sensor detectó que se detuvo — ¿por qué?' : '¿No quieres hablar? Toca la causa'}
+
+            {/* Respaldo: 1 toque directo sin pasar por texto ni IA. */}
+            <Text style={styles.subLabelCentrado}>
+              ¿No quieres hablar? Toca la causa directa
             </Text>
             <View style={styles.filaCausasRapidas}>
               {CAUSAS_RAPIDAS.map((c) => (
                 <Pressable
                   key={c.categoria}
-                  style={[styles.causaRapida, sensorPidiendoCausa && styles.causaRapidaResaltada]}
+                  style={styles.causaRapida}
                   disabled={enviando}
-                  onPress={() => {
-                    setSensorPidiendoCausa(false);
-                    cambiarCategoriaSegmento(c.categoria);
-                  }}>
-                  <Icon name={c.icono} size={18} color={sensorPidiendoCausa ? COLOR.brand : COLOR.textMuted} />
-                  <Text style={[styles.causaRapidaTexto, sensorPidiendoCausa && { color: COLOR.brandDark }]} numberOfLines={1}>{c.etiqueta}</Text>
+                  onPress={() => cambiarCategoriaSegmento(c.categoria)}>
+                  <Icon name={c.icono} size={18} color={COLOR.textMuted} />
+                  <Text style={styles.causaRapidaTexto} numberOfLines={1}>
+                    {c.etiqueta}
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -584,8 +570,7 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
 
             <View style={styles.divisor} />
 
-            {/* Nivel 3 — terciaria: cierre del ciclo, raro y separado a
-                propósito para que no compita con el flujo de trabajo. */}
+            {/* Nivel 3 — terciaria: cierre de la OP. */}
             <BotonAccion
               icono="stop-circle"
               texto="Finalizar OP"
@@ -662,49 +647,129 @@ const styles = StyleSheet.create({
   label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.sm },
   labelConEspacio: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.sm, marginTop: SPACE.xl },
   subLabelCentrado: { color: COLOR.textFaint, fontSize: 12, textAlign: 'center', marginTop: SPACE.md, marginBottom: SPACE.xs },
-  subLabelSensorActivo: { color: COLOR.brandDark, fontWeight: '700' },
-  causaRapidaResaltada: { borderColor: COLOR.brand, backgroundColor: COLOR.brandTint, borderWidth: 1.5 },
-  sensorPanel: { marginTop: SPACE.sm },
-  sensorFilaToggle: { flexDirection: 'row', alignItems: 'center', gap: SPACE.sm },
-  sensorTitulo: { flex: 1, color: COLOR.text, fontSize: 14, fontWeight: '700' },
-  sensorSwitch: {
-    width: 40,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: COLOR.border,
-    padding: 2,
-    justifyContent: 'center',
+
+  // --- Estilos de Captura de OP por Voz ---
+  opCardVoz: {
+    gap: SPACE.sm,
   },
-  sensorSwitchActivo: { backgroundColor: COLOR.brand },
-  sensorSwitchBola: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffff' },
-  sensorSwitchBolaActiva: { transform: [{ translateX: 18 }] },
-  sensorCuerpo: { marginTop: SPACE.md },
-  sensorEstado: { color: COLOR.textMuted, fontSize: 12, marginBottom: SPACE.sm },
-  sensorBarraFondo: { height: 8, borderRadius: 4, backgroundColor: COLOR.bgElevated, overflow: 'hidden' },
-  sensorBarraRelleno: { height: '100%', backgroundColor: COLOR.info, borderRadius: 4 },
-  sensorBarraSobre: { backgroundColor: COLOR.brand },
-  sensorAviso: { color: COLOR.warn, fontSize: 11, marginTop: SPACE.xs },
-  filaSensibilidad: { flexDirection: 'row', gap: SPACE.xs, marginTop: SPACE.sm },
-  chipSensibilidad: {
-    flex: 1,
+  btnVozOp: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: SPACE.xs + 2,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLOR.bgElevated,
-    borderWidth: 1,
-    borderColor: COLOR.border,
+    backgroundColor: COLOR.brand,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE.md + 2,
+    paddingHorizontal: SPACE.lg,
+    gap: SPACE.md,
+    shadowColor: COLOR.brand,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  chipSensibilidadActivo: { backgroundColor: COLOR.brand, borderColor: COLOR.brand },
-  chipSensibilidadTexto: { color: COLOR.textMuted, fontSize: 12, fontWeight: '600' },
-  input: {
-    backgroundColor: COLOR.bgElevated,
-    borderRadius: RADIUS.sm,
-    padding: SPACE.md,
+  btnVozOpEscuchando: {
+    backgroundColor: COLOR.warn,
+  },
+  iconoVozWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconoVozWrapEscuchando: {
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  },
+  textoVozWrap: {
+    flex: 1,
+  },
+  btnVozOpTitulo: {
+    color: '#ffffff',
     fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  btnVozOpSubtitulo: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  linkTeclado: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: SPACE.xs,
+    marginTop: 2,
+  },
+  linkTecladoTexto: {
+    color: COLOR.textFaint,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modoTecladoWrap: {
+    marginTop: SPACE.xs,
+    gap: SPACE.xs,
+  },
+  opConfirmadaCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLOR.bgElevated,
+    borderRadius: RADIUS.md,
+    padding: SPACE.md,
+    borderWidth: 1.5,
+    borderColor: COLOR.brandTint,
+    borderLeftWidth: 4,
+    borderLeftColor: COLOR.brand,
+  },
+  opConfirmadaInfo: {
+    flex: 1,
+  },
+  badgeVozWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  opConfirmadaBadge: {
+    color: COLOR.success,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  opConfirmadaNumero: {
     color: COLOR.text,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    fontVariant: ['tabular-nums'],
+  },
+  opConfirmadaAcciones: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xs,
+  },
+  opAccionBoton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: SPACE.xs + 2,
+    paddingHorizontal: SPACE.sm + 2,
+    backgroundColor: COLOR.surface,
+    borderRadius: RADIUS.sm,
     borderWidth: 1,
     borderColor: COLOR.border,
   },
+  opAccionBorrar: {
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  opAccionBotonTexto: {
+    color: COLOR.brand,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
   inputConIcono: {
     flexDirection: 'row',
     alignItems: 'center',

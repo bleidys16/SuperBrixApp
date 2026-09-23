@@ -7,7 +7,10 @@ import com.facebook.react.uimanager.ViewManager
 
 class AcelerometroPackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-    return listOf(AcelerometroModule(reactContext))
+    return listOf(
+      AcelerometroModule(reactContext),
+      VozModule(reactContext)
+    )
   }
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

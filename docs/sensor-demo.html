@@ -243,11 +243,21 @@
     Súbele o bájale el umbral hasta que distinga bien "trabajando" de "quieto".
   </p>
   <div class="calib-row">
-    <span>Umbral</span>
-    <input type="range" id="rangoUmbral" min="0.1" max="6" step="0.1" value="1.2" />
-    <b id="valUmbral">1.2</b>
+    <span>Nivel ahora</span>
+    <b id="valNivel">0.00</b>
+    <span style="color:var(--muted)">/ umbral</span>
+    <b id="valUmbralInline">1.2</b>
   </div>
   <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
+  <button id="btnAutoCalibrar" style="margin-top:10px; width:100%; background:var(--info); color:#04263d; border:none;">
+    🎯 Auto-calibrar (agita o enciende la herramienta 3s)
+  </button>
+  <p class="nota" id="notaCalibracion" style="margin-top:8px"></p>
+  <div class="calib-row" style="margin-top:12px">
+    <span>Umbral</span>
+    <input type="range" id="rangoUmbral" min="0.05" max="6" step="0.05" value="1.2" />
+    <b id="valUmbral">1.2</b>
+  </div>
   <div class="calib-row">
     <span>Confirmar detención (s)</span>
     <input type="range" id="rangoDetenido" min="0.5" max="5" step="0.5" value="1.8" />
@@ -319,12 +329,16 @@
     inMaquina: document.getElementById('inMaquina'),
     rangoUmbral: document.getElementById('rangoUmbral'),
     valUmbral: document.getElementById('valUmbral'),
+    valUmbralInline: document.getElementById('valUmbralInline'),
+    valNivel: document.getElementById('valNivel'),
     rangoDetenido: document.getElementById('rangoDetenido'),
     valDetenido: document.getElementById('valDetenido'),
     rangoArranque: document.getElementById('rangoArranque'),
     valArranque: document.getElementById('valArranque'),
     meterFill: document.getElementById('meterFill'),
     btnSimular: document.getElementById('btnSimular'),
+    btnAutoCalibrar: document.getElementById('btnAutoCalibrar'),
+    notaCalibracion: document.getElementById('notaCalibracion'),
     log: document.getElementById('log'),
   };
 
@@ -497,9 +511,14 @@
   var sostenParado = parseFloat(els.rangoDetenido.value) * 1000;
   var sostenActivo = parseFloat(els.rangoArranque.value) * 1000;
 
+  function fijarUmbral(v) {
+    umbral = v;
+    els.rangoUmbral.value = v;
+    els.valUmbral.textContent = umbral.toFixed(2);
+    els.valUmbralInline.textContent = umbral.toFixed(2);
+  }
   els.rangoUmbral.addEventListener('input', function () {
-    umbral = parseFloat(els.rangoUmbral.value);
-    els.valUmbral.textContent = umbral.toFixed(1);
+    fijarUmbral(parseFloat(els.rangoUmbral.value));
   });
   els.rangoDetenido.addEventListener('input', function () {
     sostenParado = parseFloat(els.rangoDetenido.value) * 1000;
@@ -517,11 +536,19 @@
   var ultimaLectura = 0;
   var armado = false;
 
+  var calibrando = false;
+  var calibrandoMax = 0;
+
   function procesarNivel(nivel) {
     ultimaLectura = nivel;
-    var pct = Math.min(100, (nivel / (umbral * 2)) * 100);
+    els.valNivel.textContent = nivel.toFixed(2);
+    // Escala visible: referencia fija (2.5) en vez de umbral*2, para que la
+    // barra no "se mueva sola" cada vez que se ajusta el umbral.
+    var pct = Math.min(100, (nivel / 2.5) * 100);
     els.meterFill.style.width = pct + '%';
     els.meterFill.classList.toggle('over', nivel > umbral);
+
+    if (calibrando && nivel > calibrandoMax) calibrandoMax = nivel;
 
     if (!armado) return;
     var ahora = Date.now();
@@ -578,6 +605,37 @@
     clearInterval(simTimer);
     procesarNivel(0);
   }
+  els.btnAutoCalibrar.addEventListener('click', function () {
+    if (calibrando) return;
+    calibrando = true;
+    calibrandoMax = 0;
+    var segundosRestantes = 3;
+    els.btnAutoCalibrar.textContent = '🎯 Midiendo… ' + segundosRestantes + 's (agita ahora)';
+    els.notaCalibracion.textContent = '';
+    var cuenta = setInterval(function () {
+      segundosRestantes--;
+      if (segundosRestantes > 0) {
+        els.btnAutoCalibrar.textContent = '🎯 Midiendo… ' + segundosRestantes + 's (agita ahora)';
+      } else {
+        clearInterval(cuenta);
+        calibrando = false;
+        els.btnAutoCalibrar.textContent = '🎯 Auto-calibrar (agita o enciende la herramienta 3s)';
+        if (calibrandoMax < 0.05) {
+          els.notaCalibracion.textContent =
+            '⚠️ Casi no se detectó movimiento (máximo ' + calibrandoMax.toFixed(2) +
+            '). ¿Agitaste el celular mientras medía? Vuelve a intentar, moviéndolo más fuerte.';
+          els.notaCalibracion.style.color = 'var(--warn)';
+        } else {
+          var nuevoUmbral = Math.max(0.05, calibrandoMax * 0.45);
+          fijarUmbral(Math.round(nuevoUmbral * 100) / 100);
+          els.notaCalibracion.textContent =
+            '✅ Máximo detectado: ' + calibrandoMax.toFixed(2) + ' → umbral puesto en ' + umbral.toFixed(2) + '.';
+          els.notaCalibracion.style.color = 'var(--ok)';
+        }
+      }
+    }, 1000);
+  });
+
   els.btnSimular.addEventListener('mousedown', simularOn);
   els.btnSimular.addEventListener('touchstart', function (ev) { ev.preventDefault(); simularOn(); });
   ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(function (ev) {

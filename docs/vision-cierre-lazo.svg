@@ -1,0 +1,103 @@
+<svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+  <style>
+    .title { font-size: 22px; font-weight: bold; fill: #1f2937; }
+    .subtitle { font-size: 14px; fill: #6b7280; }
+    .step { fill: #ffffff; stroke-width: 2; rx: 10; }
+    .step-sensor { stroke: #38bdf8; }
+    .step-ia { stroke: #f97316; }
+    .step-dash { stroke: #a78bfa; }
+    .step-accion { stroke: #10b981; }
+    .step-label { font-size: 14px; fill: #1f2937; font-weight: bold; }
+    .step-sub { font-size: 11px; fill: #6b7280; }
+    .num { font-size: 12px; fill: #ffffff; font-weight: bold; }
+    .arrow { stroke: #9ca3af; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    .arrow-loop { stroke: #10b981; stroke-width: 2.5; fill: none; stroke-dasharray: 6 5; marker-end: url(#arrowhead-green); }
+    .loop-label { font-size: 13px; fill: #047857; font-weight: bold; }
+    .footnote { font-size: 11px; fill: #9ca3af; }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9ca3af"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#10b981"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="32" class="title">Fase 2 — Visión a futuro: cierre del lazo con sensores e IA</text>
+  <text x="20" y="54" class="subtitle">El MVP de hoy cubre los pasos 3, 4, 5 y 6. Los sensores/cámaras (pasos 1, 2 y 8) son el siguiente paso, sin necesidad de que el operario escriba nada.</text>
+
+  <!-- Row 1: 1 -> 2 -> 3 -> 4 -->
+  <g>
+    <rect x="20" y="90" width="210" height="86" class="step step-sensor"/>
+    <circle cx="38" cy="106" r="11" fill="#38bdf8"/><text x="34" y="110" class="num">1</text>
+    <text x="35" y="130" class="step-label">Sensor/cámara</text>
+    <text x="35" y="146" class="step-sub">detecta el inicio real</text>
+    <text x="35" y="160" class="step-sub">de producción</text>
+
+    <path d="M230,133 H270" class="arrow"/>
+
+    <rect x="270" y="90" width="210" height="86" class="step step-sensor"/>
+    <circle cx="288" cy="106" r="11" fill="#38bdf8"/><text x="284" y="110" class="num">2</text>
+    <text x="285" y="130" class="step-label">Sensor/cámara</text>
+    <text x="285" y="146" class="step-sub">detecta la interrupción</text>
+    <text x="285" y="160" class="step-sub">(máquina para / operario sale)</text>
+
+    <path d="M480,133 H520" class="arrow"/>
+
+    <rect x="520" y="90" width="210" height="86" class="step step-ia"/>
+    <circle cx="538" cy="106" r="11" fill="#f97316"/><text x="534" y="110" class="num">3</text>
+    <text x="535" y="130" class="step-label">La app pregunta</text>
+    <text x="535" y="146" class="step-sub">la causa — solo si el</text>
+    <text x="535" y="160" class="step-sub">sensor no la infiere solo</text>
+
+    <path d="M730,133 H770" class="arrow"/>
+
+    <rect x="770" y="90" width="210" height="86" class="step step-ia"/>
+    <circle cx="788" cy="106" r="11" fill="#f97316"/><text x="784" y="110" class="num">4</text>
+    <text x="785" y="130" class="step-label">La IA clasifica</text>
+    <text x="785" y="146" class="step-sub">la causa en una de las</text>
+    <text x="785" y="160" class="step-sub">7 categorías oficiales</text>
+  </g>
+
+  <!-- connector down from box4 to row2 box5 -->
+  <path d="M875,176 V216" class="arrow"/>
+
+  <!-- Row 2: 5 <- 6 <- 7  (visual right-to-left, logical 5 -> 6 -> 7) -->
+  <g>
+    <rect x="770" y="216" width="210" height="86" class="step step-dash"/>
+    <circle cx="788" cy="232" r="11" fill="#a78bfa"/><text x="784" y="236" class="num">5</text>
+    <text x="785" y="256" class="step-label">Tiempo exacto</text>
+    <text x="785" y="272" class="step-sub">registrado (inicio-fin</text>
+    <text x="785" y="286" class="step-sub">reales, no estimados)</text>
+
+    <path d="M770,259 H730" class="arrow"/>
+
+    <rect x="520" y="216" width="210" height="86" class="step step-dash"/>
+    <circle cx="538" cy="232" r="11" fill="#a78bfa"/><text x="534" y="236" class="num">6</text>
+    <text x="535" y="256" class="step-label">Pareto del dashboard</text>
+    <text x="535" y="272" class="step-sub">identifica la causa que</text>
+    <text x="535" y="286" class="step-sub">más pesa (muchos eventos)</text>
+
+    <path d="M520,259 H480" class="arrow"/>
+
+    <rect x="270" y="216" width="210" height="86" class="step step-accion"/>
+    <circle cx="288" cy="232" r="11" fill="#10b981"/><text x="284" y="236" class="num">7</text>
+    <text x="285" y="256" class="step-label">Acción correctiva</text>
+    <text x="285" y="272" class="step-sub">el jefe ataca esa</text>
+    <text x="285" y="286" class="step-sub">causa específica</text>
+  </g>
+
+  <!-- Loop back: step 7 -> step 1, closing the cycle -->
+  <path d="M270,259 C160,330 60,300 90,220 C105,182 30,170 20,133" class="arrow-loop"/>
+  <rect x="20" y="360" width="210" height="76" class="step step-accion" stroke-dasharray="4 3"/>
+  <circle cx="38" cy="376" r="11" fill="#10b981"/><text x="34" y="380" class="num">8</text>
+  <text x="35" y="400" class="step-label">Se vuelve a medir</text>
+  <text x="35" y="416" class="step-sub">con los mismos sensores:</text>
+  <text x="35" y="430" class="step-sub">¿bajó el tiempo perdido?</text>
+  <path d="M125,360 C125,330 108,300 78,272" class="arrow-loop"/>
+  <text x="250" y="405" class="loop-label">Cierre del lazo: mejora continua, no solo un reporte</text>
+
+  <text x="20" y="480" class="footnote">Nota para el jurado: los pasos 1, 2 y 8 miden la ZONA y el ESTADO de la máquina (ocupada/libre, encendida/apagada),</text>
+  <text x="20" y="496" class="footnote">nunca identifican personas — es medición del proceso, no vigilancia individual (Ley 1581 de 2012 de protección de datos).</text>
+</svg>

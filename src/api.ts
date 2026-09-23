@@ -16,6 +16,7 @@ export interface ReporteEvento {
   cedula: string;
   nombre: string;
   op: string;
+  maquina: string;
   /** Categoría del segmento que se está cerrando (si hay uno corriendo). */
   categoriaCerrada?: string;
   /** Horas que duró ese segmento cerrado. */

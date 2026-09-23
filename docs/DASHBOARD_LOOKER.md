@@ -2,7 +2,9 @@
 
 ## 0. Cómo leer la hoja "Registros"
 
-Columnas: `Fecha_Hora | Cedula | Nombre_Empleado | OP | Tipo_Evento | Descripcion_OP | Categoria_IA | Confianza | Horas_Segmento`.
+Columnas: `Fecha_Hora | Cedula | Nombre_Empleado | OP | Tipo_Evento | Descripcion_OP | Categoria_IA | Confianza | Horas_Segmento | Maquina`.
+
+`Maquina` va al final a propósito: así no se corren las columnas que Looker ya tenía mapeadas. Después de agregarla, en la fuente de datos de Looker hay que darle a **Actualizar campos** para que aparezca.
 
 Cada fila es **un solo segmento**, nunca dos cosas mezcladas:
 
@@ -18,7 +20,7 @@ Cada fila es **un solo segmento**, nunca dos cosas mezcladas:
    → pestaña `Registros`.
 3. Verifica los tipos de campo:
    - `Fecha_Hora` → Fecha y hora
-   - `Cedula`, `Nombre_Empleado`, `OP`, `Tipo_Evento`, `Categoria_IA`, `Confianza`, `Descripcion_OP` → Texto
+   - `Cedula`, `Nombre_Empleado`, `OP`, `Maquina`, `Tipo_Evento`, `Categoria_IA`, `Confianza`, `Descripcion_OP` → Texto
    - `Horas_Segmento` → Número
 4. Crea un campo calculado `Es_Produccion_Activa` (booleano), útil para el
    widget de distribución de tiempo:
@@ -32,7 +34,7 @@ En **todos** los widgets de esta tabla, agrega el filtro `Tipo_Evento = Cierre` 
 |---|---|---|
 | Distribución de tiempo | Gráfico circular o barras 100% apiladas | Dimensión: `Categoria_IA` (o el campo calculado Producción Activa vs. resto). Métrica: **SUM(Horas_Segmento)**, no conteo. |
 | Causas de pérdida de tiempo | Gráfico de barras ordenado (Pareto) | Dimensión: `Categoria_IA` (excluyendo Producción Activa). Métrica: **SUM(Horas_Segmento)**. Ordenar descendente. |
-| Filtro dinámico | Controles de filtro | Uno por `Nombre_Empleado`, uno por `OP`. (Si más adelante agregan máquina, agrégalo aquí también.) |
+| Filtro dinámico | Controles de filtro | Uno por `Nombre_Empleado`, uno por `Maquina` y uno por `OP` (la rúbrica pide los tres). |
 | Alertas / cuellos de botella | Tabla con formato condicional o Scorecard | Resalta cuando SUM(Horas_Segmento) de "Espera de Materiales" o "Falla Técnica" para una OP/operario supera un umbral (ej. > 1 hora en el turno). |
 | Línea de tiempo | Serie de tiempo | Eje X: `Fecha_Hora` (por hora), Métrica: SUM(Horas_Segmento), para ver cuándo se concentran los paros. |
 

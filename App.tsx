@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import LoginScreen from './src/screens/LoginScreen';
 import CapturaScreen from './src/screens/CapturaScreen';
 import { Operario, guardarOperario, obtenerOperario, limpiarOperario } from './src/storage';
+import { COLOR } from './src/theme';
 
 function App() {
   const [operario, setOperario] = useState<Operario | null>(null);
@@ -35,10 +36,10 @@ function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       {cargando ? (
         <View style={styles.loading}>
-          <ActivityIndicator color="#f97316" size="large" />
+          <ActivityIndicator color={COLOR.brand} size="large" />
         </View>
       ) : operario ? (
         <CapturaScreen operario={operario} onCambiarOperario={cambiarOperario} />
@@ -50,7 +51,7 @@ function App() {
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, backgroundColor: '#111827', justifyContent: 'center' },
+  loading: { flex: 1, backgroundColor: COLOR.bg, justifyContent: 'center' },
 });
 
 export default App;

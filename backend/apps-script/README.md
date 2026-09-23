@@ -6,7 +6,7 @@
 2. En la hoja "Registros" (el script la crea sola en el primer POST, pero puedes
    crearla a mano con estas columnas en la fila 1):
 
-   `Fecha_Hora | Cedula | Nombre_Empleado | OP | Tipo_Evento | Descripcion_OP | Categoria_IA | Confianza | Horas_Segmento`
+   `Fecha_Hora | Cedula | Nombre_Empleado | OP | Tipo_Evento | Descripcion_OP | Categoria_IA | Confianza | Horas_Segmento | Maquina`
 
    Estas columnas son casi 1 a 1 con la tarjeta física actual `FO-A-MA-01
    Control de tiempos orden de producción` (Cédula, Nombre, OP#, Descripción
@@ -30,25 +30,57 @@
 1. En el Sheet: `Extensiones > Apps Script`.
 2. Borra el contenido de `Code.gs` y pega el archivo `Code.gs` de esta carpeta.
 
-## 3. Configurar la API key de NVIDIA
+## 3. Configurar las API keys de IA (Groq + NVIDIA como respaldo)
+
+El backend prueba los proveedores en orden: **Groq primero, NVIDIA después,
+y si ambos fallan, un clasificador por palabras clave** (nunca se cae del
+todo). Cada uno se activa solo con tener su propiedad configurada; puedes
+tener solo Groq, solo NVIDIA, o los dos.
+
+### Groq (recomendado, el que usa la demo)
+
+Groq corre modelos open source (Llama, Gemma, Mixtral) sobre hardware propio
+(LPU), no sobre GPUs compartidas como NVIDIA NIM gratis: responde típicamente
+en **menos de 1 segundo**, sin la cola variable (2-40 s) que tiene NVIDIA.
+
+1. Ve a https://console.groq.com → crea una cuenta gratis (con Google es
+   inmediato) → **API Keys** → **Create API Key**. Copia la key (empieza
+   con `gsk_`).
+2. En el editor de Apps Script: ícono de engranaje (Configuración del
+   proyecto) → **Propiedades del script** → Añadir propiedad:
+   - Propiedad: `GROQ_API_KEY`
+   - Valor: tu API key
+3. El modelo por defecto es `llama-3.3-70b-versatile`. Si Groq cambia su
+   catálogo, se puede sobreescribir sin tocar código con una propiedad
+   `GROQ_MODEL` (ver https://console.groq.com/docs/models para los vigentes).
+
+### NVIDIA (respaldo, opcional)
 
 1. Ve a https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b (crea
    cuenta gratis si te la pide) y en la sección "Prototype" da clic en
    **Generate API Key**. Copia la key (empieza con `nvapi-`).
-   - Nota: el modelo `meta/llama-3.1-8b-instruct` que se usaba antes fue
-     descontinuado por NVIDIA; el backend ya quedó actualizado para usar
-     `nvidia/nemotron-3.5-lightning-30b-a3b`, que sigue activo con "Free
-     Endpoint". Si NVIDIA vuelve a cambiar el catálogo, entra a
-     https://build.nvidia.com/models, filtra por "Free Endpoint" y elige
-     cualquier modelo de texto (`text-to-text`) que no diga "Deprecated";
-     solo cambia la constante `NVIDIA_MODEL` en `Code.gs` por el nuevo id
-     (el que aparece en el ejemplo de código como `model="..."`).
-2. En el editor de Apps Script: ícono de engranaje (Configuración del proyecto)
-   → **Propiedades del script** → Añadir propiedad:
-   - Propiedad: `NVIDIA_API_KEY`
-   - Valor: tu API key
-3. Si no configuras la key, el sistema no se cae: usa un clasificador de respaldo
-   por palabras clave (`clasificarPorPalabrasClave`) para no perder la demo.
+   - El endpoint gratis de NVIDIA es una cola compartida: puede tardar entre
+     2 y 40+ segundos según la hora. Por eso va como respaldo detrás de Groq,
+     no como principal.
+2. Añade la propiedad `NVIDIA_API_KEY` igual que arriba.
+3. El modelo por defecto es `nvidia/nemotron-3.5-lightning-30b-a3b` (los
+   otros modelos "gratis" del catálogo de NVIDIA dieron 404/410 al probarlos
+   con esta cuenta); se puede cambiar con una propiedad `NVIDIA_MODEL` sin
+   tocar código. La función `compararModelosNVIDIA()` en el editor prueba
+   varios candidatos y dice cuál responde.
+
+### Si no configuras ninguna
+
+El sistema no se cae: usa el clasificador de respaldo por palabras clave
+(`clasificarPorPalabrasClave`) para no perder la demo. La columna `Confianza`
+del Sheet dirá `baja (heurística sin IA)` en ese caso.
+
+### Antes de la demo
+
+Ejecuta `probarIA()` desde el editor: prueba TODOS los proveedores
+configurados (no solo el primero) y dice cuánto tarda cada uno y si
+clasifica bien, para confirmar que el respaldo también funciona por si Groq
+llegara a fallar en pleno pitch.
 
 ## 4. Publicar como Web App
 
@@ -69,20 +101,20 @@ siga bien la redirección de Apps Script en Windows/Git Bash):
 Simular el inicio de una OP con botón rápido (sin IA, 1 fila "Inicio"):
 
 ```bash
-curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"abreNuevoSegmento\":true,\"categoria\":\"Producción Activa\"}"
+curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"maquina\":\"Fresadora CNC\",\"abreNuevoSegmento\":true,\"categoria\":\"Producción Activa\"}"
 ```
 
 Simular una novedad en lenguaje libre que cierra ese segmento y abre uno
 nuevo clasificado por la IA (2 filas: "Cierre" + "Inicio"):
 
 ```bash
-curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"categoriaCerrada\":\"Producción Activa\",\"horasCerradas\":0.75,\"abreNuevoSegmento\":true,\"texto\":\"Pare la fresadora porque estoy esperando que traigan la broca de 1/2 pulgada\"}"
+curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"maquina\":\"Fresadora CNC\",\"categoriaCerrada\":\"Producción Activa\",\"horasCerradas\":0.75,\"abreNuevoSegmento\":true,\"texto\":\"Pare la fresadora porque estoy esperando que traigan la broca de 1/2 pulgada\"}"
 ```
 
 Simular "Finalizar OP" (solo cierra, 1 fila "Cierre", sin abrir nada nuevo):
 
 ```bash
-curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"categoriaCerrada\":\"Espera de Materiales / Logística\",\"horasCerradas\":0.25,\"abreNuevoSegmento\":false}"
+curl -s -L "TU_URL_/exec" -H "Content-Type: application/json" --data "{\"cedula\":\"72234621\",\"nombre\":\"Juan Perez\",\"op\":\"62611\",\"maquina\":\"Fresadora CNC\",\"categoriaCerrada\":\"Espera de Materiales / Logística\",\"horasCerradas\":0.25,\"abreNuevoSegmento\":false}"
 ```
 
 Deberías ver la(s) fila(s) nueva(s) en el Sheet y una respuesta JSON con la

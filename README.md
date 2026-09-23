@@ -1,97 +1,100 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# SuperBrix
 
-# Getting Started
+App móvil + backend para digitalizar el control de tiempos de taller: el
+operario reporta en 1-2 toques (o por voz) qué está pasando en su máquina, una
+IA clasifica la causa de cualquier interrupción, y todo queda en una Google
+Sheet lista para un dashboard de Looker Studio. Construido para el reto de
+innovación y digitalización industrial (bootcamp, 24 horas).
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Qué resuelve
 
-## Step 1: Start Metro
+En muchos talleres el tiempo perdido (esperas, fallas, setup) no se mide, o se
+mide en papel al final del turno — para entonces nadie recuerda los detalles.
+SuperBrix captura el evento en el momento, sin formularios largos, y usa IA
+para no obligar al operario a elegir manualmente entre categorías técnicas.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## Cómo funciona
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+1. El operario abre la app, ingresa su cédula/nombre (se recuerda en el
+   celular) y elige OP# + máquina.
+2. Toca **Iniciar Producción Activa**. Se activa un cronómetro.
+3. Cuando algo lo detiene, toca **Pausar / reportar novedad** y dicta o
+   escribe en lenguaje natural qué pasó (ej. *"paré la fresadora porque estoy
+   esperando la broca de 1/2 pulgada"*).
+4. El backend (Google Apps Script) manda ese texto a un modelo de IA (Groq,
+   con NVIDIA NIM como respaldo automático si Groq falla) que lo clasifica en
+   una de las categorías oficiales del reto, y guarda la fila en un Google
+   Sheet.
+5. Looker Studio, conectado en vivo a esa hoja, arma el Pareto de causas y los
+   demás widgets del dashboard.
 
-```sh
-# Using npm
-npm start
+### Modo sensor (beta)
 
-# OR using Yarn
-yarn start
+Además del flujo manual, la app puede usar el acelerómetro real del celular
+(módulo nativo propio, sin librerías de terceros) para detectar automáticamente
+cuándo una máquina empieza o deja de vibrar, y disparar el inicio/la pregunta
+de causa sin que el operario tenga que tocar nada. Pensado como demostración
+de hacia dónde puede escalar el proyecto (ver "Visión Fase 2" abajo).
+
+## Stack
+
+- **App**: React Native 0.87 + TypeScript (CLI nativo, sin Expo).
+- **Backend**: Google Apps Script (`doPost`/`doGet`) sobre Google Sheets como
+  base de datos.
+- **IA**: Groq (primario, rápido) con NVIDIA NIM como fallback automático en
+  paralelo; fallback final por palabras clave si ambas fallan.
+- **Dashboard**: Looker Studio, conectado directo a la Sheet.
+- **Sensor**: módulo nativo Android (Kotlin) propio para el acelerómetro,
+  expuesto a JS vía `NativeEventEmitter`.
+
+## Estructura del repo
+
+```
+App.tsx                        Entry point de la app
+src/
+  screens/                     LoginScreen, CapturaScreen
+  components/                  BannerClasificacion, TextoModal
+  hooks/useSensorVibracion.ts  Lógica de detección de vibración
+  nativo/acelerometro.ts       Wrapper JS del módulo nativo
+  api.ts                       Llamadas al backend
+  storage.ts                   Persistencia local (AsyncStorage)
+  theme.ts                     Colores, radios, espaciados de marca
+  categorias.ts                Mapeo categoría → color
+android/
+  app/src/main/java/com/superbrix/app/
+    AcelerometroModule.kt      Módulo nativo del acelerómetro
+    AcelerometroPackage.kt     Registro del módulo en React Native
+backend/apps-script/
+  Code.gs                      API (doPost/doGet), clasificación IA, dedup
+  README.md                    Cómo desplegar el backend
+docs/
+  EJECUTAR.md                  Guía paso a paso para correr la app localmente
+  PLAN.md                      Plan de ejecución del reto (24h) y mapeo a rúbrica
+  DASHBOARD_LOOKER.md          Cómo armar el dashboard en Looker Studio
+  sensor-demo.html             Demo web standalone del algoritmo de vibración
+  vision-cierre-lazo.svg       Diagrama de la visión Fase 2
 ```
 
-## Step 2: Build and run your app
+## Cómo correr el proyecto
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+Ver la guía completa en [`docs/EJECUTAR.md`](docs/EJECUTAR.md). Resumen:
 
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+```bash
+npm install
+npm run android   # con un emulador o celular conectado por USB
 ```
 
-### iOS
+Para conectar la app al backend, desplegar primero Apps Script siguiendo
+[`backend/apps-script/README.md`](backend/apps-script/README.md) y pegar la
+URL `/exec` resultante en `API_URL` dentro de [`src/api.ts`](src/api.ts).
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+## Visión Fase 2: más allá del reporte manual
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+La app ya prueba que se puede detectar automáticamente si una máquina está
+funcionando o parada (vía el acelerómetro). El siguiente paso natural es llevar
+esa misma idea a nivel de máquina/estación (cámaras o sensores fijos en vez de
+un celular), para que el estado de cada puesto se actualice solo y el operario
+solo tenga que responder "¿por qué?" cuando de verdad hace falta. La idea se
+enmarca como **medición de proceso, no vigilancia de personas** (relevante
+bajo la Ley 1581 de 2012 de protección de datos en Colombia). Ver el diagrama
+en [`docs/vision-cierre-lazo.svg`](docs/vision-cierre-lazo.svg).

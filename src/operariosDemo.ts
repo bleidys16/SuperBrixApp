@@ -6,9 +6,7 @@ import type { Operario } from './storage';
  * No representan credenciales reales ni reemplazan el ingreso manual.
  */
 export const OPERARIOS_DEMO: readonly Operario[] = [
-  { cedula: '72234621', nombre: 'Juan Perez' },
   { cedula: '1098765432', nombre: 'Maria Gomez' },
-  { cedula: '1055667788', nombre: 'Laura Torres' },
 ];
 
 export function buscarOperarioDemo(cedula: string): Operario | null {

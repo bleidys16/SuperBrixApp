@@ -8,10 +8,13 @@ import {
   Platform,
   StyleSheet,
   BackHandler,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { COLOR, RADIUS, SPACE } from '../theme';
+import { COLOR, FONT, RADIUS, SPACE } from '../theme';
+import { dictarAudio } from '../nativo/voz';
 
 interface Props {
   visible: boolean;
@@ -22,12 +25,7 @@ interface Props {
 }
 
 /**
- * Overlay de texto libre. A propósito NO usa el <Modal> de React Native: en
- * Android el Modal abre una ventana nativa separada que no participa del
- * ajuste de teclado del KeyboardAvoidingView de la pantalla que lo llama, así
- * que el teclado terminaba tapando el campo de texto sin dejar ver lo que se
- * escribía. Al ser una vista normal dentro del mismo árbol que CapturaScreen,
- * hereda su mismo comportamiento de teclado.
+ * Overlay de texto libre con soporte de dictado por voz nativo.
  */
 export default function TextoModal({
   visible,
@@ -38,6 +36,7 @@ export default function TextoModal({
 }: Props) {
   const insets = useSafeAreaInsets();
   const [texto, setTexto] = useState('');
+  const [escuchandoVoz, setEscuchandoVoz] = useState(false);
 
   useEffect(() => {
     if (!visible || Platform.OS !== 'android') {
@@ -52,6 +51,24 @@ export default function TextoModal({
 
   if (!visible) {
     return null;
+  }
+
+  async function dictarPorVoz() {
+    setEscuchandoVoz(true);
+    try {
+      const promptVoz = titulo ? `${titulo} (habla con naturalidad)` : 'Cuéntanos qué pasó en la máquina';
+      const capturado = await dictarAudio(promptVoz);
+      if (capturado && capturado.trim()) {
+        setTexto((actual) => (actual ? `${actual} ${capturado.trim()}` : capturado.trim()));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('cancelado') && !msg.includes('CANCELADO')) {
+        Alert.alert('Dictado por voz', msg);
+      }
+    } finally {
+      setEscuchandoVoz(false);
+    }
   }
 
   const confirmar = () => {
@@ -81,7 +98,30 @@ export default function TextoModal({
           ]}
         >
           <View style={styles.manija} />
-          <Text style={styles.titulo}>{titulo}</Text>
+          <View style={styles.headerModal}>
+            <Text style={styles.titulo}>{titulo}</Text>
+          </View>
+
+          {/* Botón de Dictado por Voz Directo */}
+          <Pressable
+            style={({ pressed }) => [
+              styles.botonVozNativo,
+              escuchandoVoz && styles.botonVozNativoActivo,
+              pressed && styles.botonPresionado,
+            ]}
+            disabled={escuchandoVoz}
+            onPress={dictarPorVoz}
+          >
+            {escuchandoVoz ? (
+              <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: SPACE.xs }} />
+            ) : (
+              <Icon name="mic" size={20} color="#ffffff" style={{ marginRight: SPACE.xs }} />
+            )}
+            <Text style={styles.botonVozNativoTexto}>
+              {escuchandoVoz ? 'Escuchando tu voz…' : 'Dictar por voz ahora'}
+            </Text>
+          </Pressable>
+
           <TextInput
             style={styles.input}
             placeholder={placeholder}
@@ -92,12 +132,14 @@ export default function TextoModal({
             onChangeText={setTexto}
             selectionColor={COLOR.brand}
           />
+
           <View style={styles.hintFila}>
-            <Icon name="mic" size={14} color={COLOR.textFaint} />
+            <Icon name="info-outline" size={13} color={COLOR.textFaint} />
             <Text style={styles.hint}>
-              Usa el micrófono del teclado para dictar en vez de escribir
+              Puedes hablar o escribir. La IA clasificará la causa automáticamente.
             </Text>
           </View>
+
           <View style={styles.botones}>
             <Pressable
               style={[styles.boton, styles.botonCancelar]}
@@ -114,7 +156,7 @@ export default function TextoModal({
                 styles.botonConfirmar,
                 !texto.trim() && styles.botonDeshabilitado,
               ]}
-              disabled={!texto.trim()}
+              disabled={!texto.trim() || escuchandoVoz}
               onPress={confirmar}
             >
               <Icon
@@ -123,7 +165,7 @@ export default function TextoModal({
                 color="#ffffff"
                 style={{ marginRight: SPACE.xs }}
               />
-              <Text style={styles.botonTexto}>Enviar</Text>
+              <Text style={styles.botonTexto}>Enviar a IA</Text>
             </Pressable>
           </View>
         </View>
@@ -175,31 +217,60 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: SPACE.lg,
   },
+  headerModal: {
+    marginBottom: SPACE.sm,
+  },
   titulo: {
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: FONT.bold,
     color: COLOR.text,
+  },
+  botonVozNativo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLOR.brand,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.lg,
     marginBottom: SPACE.md,
+    shadowColor: COLOR.brand,
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  botonVozNativoActivo: {
+    backgroundColor: COLOR.danger,
+  },
+  botonVozNativoTexto: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontFamily: FONT.bold,
+  },
+  botonPresionado: {
+    opacity: 0.8,
   },
   input: {
-    minHeight: 90,
-    maxHeight: 130,
+    minHeight: 85,
+    maxHeight: 120,
     borderWidth: 1,
     borderColor: COLOR.border,
     backgroundColor: COLOR.bgElevated,
     borderRadius: RADIUS.md,
     padding: SPACE.md,
-    fontSize: 16,
+    fontSize: 15,
     color: COLOR.text,
+    fontFamily: FONT.regular,
     textAlignVertical: 'top',
   },
   hintFila: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.xs,
-    marginTop: SPACE.sm,
+    marginTop: SPACE.xs + 2,
   },
-  hint: { fontSize: 12, color: COLOR.textFaint, flexShrink: 1 },
+  hint: { fontSize: 11, color: COLOR.textFaint, flexShrink: 1, fontFamily: FONT.regular },
   botones: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -220,6 +291,6 @@ const styles = StyleSheet.create({
   },
   botonConfirmar: { backgroundColor: COLOR.brand },
   botonDeshabilitado: { opacity: 0.4 },
-  botonTexto: { color: '#ffffff', fontWeight: '700' },
-  botonTextoCancelar: { color: COLOR.textMuted, fontWeight: '600' },
+  botonTexto: { color: '#ffffff', fontFamily: FONT.bold },
+  botonTextoCancelar: { color: COLOR.textMuted, fontFamily: FONT.medium },
 });

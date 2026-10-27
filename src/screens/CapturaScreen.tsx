@@ -12,6 +12,7 @@ import {
   Keyboard,
   Platform,
   Image,
+  Animated,
   type ScrollViewInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,10 +22,10 @@ import { enviarEvento, ReporteEvento, RespuestaBackend } from '../api';
 import TextoModal from '../components/TextoModal';
 import BannerClasificacion from '../components/BannerClasificacion';
 import ResumenScreen from './ResumenScreen';
-import { colorCategoria } from '../categorias';
-import { COLOR, RADIUS, SPACE } from '../theme';
+import { ANDON, COLOR, FONT, RADIUS, SPACE } from '../theme';
 import { dictarAudio } from '../nativo/voz';
 import { extraerNumeroOp } from '../utils/numeroVoz';
+import ModalEscanerOP from '../components/ModalEscanerOP';
 
 interface Props {
   operario: Operario;
@@ -39,39 +40,95 @@ interface SegmentoActivo {
   inicioMs: number;
 }
 
-// Puestos de trabajo de la planta; se eligen con un solo toque, sin escribir.
-const MAQUINAS = [
-  'Fresadora CNC',
-  'Torno',
-  'Soldadora MIG',
-  'Prensa dobladora',
-  'Cortadora plasma',
-  'Ensamble',
-  'Pintura',
+// Puestos de trabajo de la planta; se eligen con un solo toque, organizados en cuadrícula ergonómica.
+const MAQUINAS: Array<{ id: string; nombre: string; icono: string }> = [
+  { id: 'Fresadora CNC', nombre: 'Fresadora CNC', icono: 'precision-manufacturing' },
+  { id: 'Torno', nombre: 'Torno', icono: 'settings' },
+  { id: 'Soldadora MIG', nombre: 'Soldadora MIG', icono: 'flash-on' },
+  { id: 'Prensa dobladora', nombre: 'Prensa dobladora', icono: 'compress' },
+  { id: 'Cortadora plasma', nombre: 'Cortadora plasma', icono: 'electric-bolt' },
+  { id: 'Ensamble', nombre: 'Ensamble', icono: 'handyman' },
+  { id: 'Pintura', nombre: 'Pintura', icono: 'format-paint' },
 ];
 
 const CATEGORIA_SETUP = 'Alistamiento y Preparación (Setup)';
 const CATEGORIA_AUSENCIA = 'Ausencia del Operario / Descanso';
 
-// Respaldo rápido al reportar novedad: si el operario no quiere hablar o la
-// IA falla, un toque directo — sin pasar por texto ni por la IA.
-const CAUSAS_RAPIDAS: Array<{
-  categoria: string;
-  icono: string;
-  etiqueta: string;
-}> = [
+/**
+ * Tarjetas 2x2 diseñadas para manipulación con guantes de carnaza en taller.
+ * Con 1 toque directo el operario cambia el estado sin teclear ni hablar.
+ */
+const TARJETAS_PARADA = [
   {
     categoria: 'Falla Técnica / Mantenimiento',
+    etiqueta: 'Falla Máquina',
+    subtitulo: 'Mecánica o eléctrica',
     icono: 'build',
-    etiqueta: 'Falla técnica',
+    tipo: 'falla' as const,
   },
   {
     categoria: 'Espera de Materiales / Logística',
-    icono: 'local-shipping',
-    etiqueta: 'Espera material',
+    etiqueta: 'Falta Material',
+    subtitulo: 'Piezas, insumos o grúa',
+    icono: 'inventory-2',
+    tipo: 'material' as const,
   },
-  { categoria: CATEGORIA_SETUP, icono: 'settings', etiqueta: 'Setup' },
-];
+  {
+    categoria: CATEGORIA_SETUP,
+    etiqueta: 'Setup / Ajuste',
+    subtitulo: 'Calibración o mordaza',
+    icono: 'tune',
+    tipo: 'setup' as const,
+  },
+  {
+    categoria: CATEGORIA_AUSENCIA,
+    etiqueta: 'Salgo del Puesto',
+    subtitulo: 'Pausa activa o baño',
+    icono: 'directions-walk',
+    tipo: 'pausa' as const,
+  },
+] as const;
+
+function obtenerEstiloAndon(categoria: string) {
+  if (categoria === 'Producción Activa') {
+    return {
+      andon: ANDON.produccion,
+      icono: 'precision-manufacturing',
+      etiquetaEstado: 'PRODUCCIÓN EN CURSO',
+      esProduccion: true,
+    };
+  }
+  if (categoria.includes('Falla') || categoria.includes('Mantenimiento')) {
+    return {
+      andon: ANDON.falla,
+      icono: 'warning',
+      etiquetaEstado: 'PARO TÉCNICO',
+      esProduccion: false,
+    };
+  }
+  if (categoria.includes('Material') || categoria.includes('Logística')) {
+    return {
+      andon: ANDON.material,
+      icono: 'inventory-2',
+      etiquetaEstado: 'ESPERA DE MATERIAL',
+      esProduccion: false,
+    };
+  }
+  if (categoria.includes('Setup') || categoria.includes('Alistamiento')) {
+    return {
+      andon: ANDON.setup,
+      icono: 'tune',
+      etiquetaEstado: 'ALISTAMIENTO (SETUP)',
+      esProduccion: false,
+    };
+  }
+  return {
+    andon: ANDON.pausa,
+    icono: 'pause-circle-filled',
+    etiquetaEstado: 'PAUSA / NOVEDAD',
+    esProduccion: false,
+  };
+}
 
 function clasificarTextoLocal(texto: string): {
   categoria: string;
@@ -153,8 +210,8 @@ function BotonAccion({
     variante === 'primaria'
       ? '#ffffff'
       : variante === 'terciaria'
-      ? colorTerciaria || COLOR.textMuted
-      : COLOR.ink;
+        ? colorTerciaria || COLOR.textMuted
+        : COLOR.ink;
   return (
     <Pressable
       style={({ pressed }) => [
@@ -203,17 +260,25 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   const [clasificacion, setClasificacion] = useState<{
     categoria: string;
     confianza: string;
+    proveedor?: string;
+    tiempoMs?: number;
   } | null>(null);
+  const pulsoAnim = useRef(new Animated.Value(1)).current;
+  const pulsoOpacidad = useRef(new Animated.Value(0.35)).current;
+  const colonOpacidadAnim = useRef(new Animated.Value(1)).current;
   const siguienteSegmentoId = useRef(1);
   const colaSync = useRef<Promise<void>>(Promise.resolve());
   const pendientesSync = useRef(0);
   const pendientesIA = useRef(0);
   const maquinaResumen = segmento?.maquina || maquina;
 
-  // --- Captura de OP por Voz (Flujo 100% Sin Escritura) ---
+  // --- Captura de OP por Voz y Código QR/Barras ---
   const [escuchandoOp, setEscuchandoOp] = useState(false);
   const [modoTecladoOp, setModoTecladoOp] = useState(false);
   const [opPorVoz, setOpPorVoz] = useState(false);
+  const [opPorQr, setOpPorQr] = useState(false);
+  const [opDetallePieza, setOpDetallePieza] = useState('');
+  const [modalEscanerVisible, setModalEscanerVisible] = useState(false);
 
   useEffect(() => {
     obtenerMaquina().then(setMaquina);
@@ -222,6 +287,14 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
   function elegirMaquina(m: string) {
     setMaquina(m);
     guardarMaquina(m);
+  }
+
+  function alEscanearOp(numero: string, descripcion?: string) {
+    setOp(numero);
+    setModoTecladoOp(false);
+    setOpPorQr(true);
+    setOpPorVoz(false);
+    setOpDetallePieza(descripcion || '');
   }
 
   async function capturarOpPorVoz() {
@@ -235,6 +308,8 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         setOp(numero);
         setModoTecladoOp(false);
         setOpPorVoz(true);
+        setOpPorQr(false);
+        setOpDetallePieza('');
       } else {
         Alert.alert(
           'No se reconoció un número de OP',
@@ -282,6 +357,63 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
     }, 1000);
     return () => clearInterval(id);
   }, [segmento]);
+
+  // Animaciones continuas: pulso luminoso Andon, parpadeo de dos puntos y halo del cronómetro
+  useEffect(() => {
+    if (!segmento) {
+      return;
+    }
+    const loopAndon = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(pulsoAnim, {
+            toValue: 1.45,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulsoAnim, {
+            toValue: 1,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(pulsoOpacidad, {
+            toValue: 0.85,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulsoOpacidad, {
+            toValue: 0.25,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+
+    const loopColon = Animated.loop(
+      Animated.sequence([
+        Animated.timing(colonOpacidadAnim, {
+          toValue: 0.2,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(colonOpacidadAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    loopAndon.start();
+    loopColon.start();
+    return () => {
+      loopAndon.stop();
+      loopColon.stop();
+    };
+  }, [segmento, pulsoAnim, pulsoOpacidad, colonOpacidadAnim]);
 
   function crearSegmentoLocal(
     categoria: string,
@@ -376,14 +508,16 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         setSegmento(actual =>
           actual?.id === nuevoSegmento.id
             ? {
-                ...actual,
-                categoria: respuesta.categoria || preliminar.categoria,
-              }
+              ...actual,
+              categoria: respuesta.categoria || preliminar.categoria,
+            }
             : actual,
         );
         setClasificacion({
           categoria: respuesta.categoria,
           confianza: respuesta.confianza || '',
+          proveedor: respuesta.proveedor,
+          tiempoMs: respuesta.tiempoClasificacionMs,
         });
       },
       true,
@@ -413,14 +547,16 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         setSegmento(actual =>
           actual?.id === nuevoSegmento.id
             ? {
-                ...actual,
-                categoria: respuesta.categoria || preliminar.categoria,
-              }
+              ...actual,
+              categoria: respuesta.categoria || preliminar.categoria,
+            }
             : actual,
         );
         setClasificacion({
           categoria: respuesta.categoria,
           confianza: respuesta.confianza || '',
+          proveedor: respuesta.proveedor,
+          tiempoMs: respuesta.tiempoClasificacionMs,
         });
       },
       true,
@@ -446,18 +582,46 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
 
   function finalizarOp() {
     if (!segmento) return;
-    const anterior = segmento;
-    setSegmento(null);
-    setOp('');
-    sincronizarEnSegundoPlano({
-      cedula: operario.cedula,
-      nombre: operario.nombre,
-      op: anterior.op,
-      maquina: anterior.maquina,
-      categoriaCerrada: anterior.categoria,
-      horasCerradas: (Date.now() - anterior.inicioMs) / 1000 / 3600,
-      abreNuevoSegmento: false,
-    });
+    Alert.alert(
+      '¿Finalizar Orden de Producción?',
+      `Se cerrará la OP #${segmento.op} en ${segmento.maquina} y se guardará el tiempo acumulado en Google Sheets.`,
+      [
+        { text: 'Continuar trabajando', style: 'cancel' },
+        {
+          text: 'Sí, finalizar OP',
+          style: 'destructive',
+          onPress: () => {
+            const anterior = segmento;
+            setSegmento(null);
+            setOp('');
+            sincronizarEnSegundoPlano({
+              cedula: operario.cedula,
+              nombre: operario.nombre,
+              op: anterior.op,
+              maquina: anterior.maquina,
+              categoriaCerrada: anterior.categoria,
+              horasCerradas: (Date.now() - anterior.inicioMs) / 1000 / 3600,
+              abreNuevoSegmento: false,
+            });
+          },
+        },
+      ],
+    );
+  }
+
+  function confirmarSalir() {
+    Alert.alert(
+      'Cerrar sesión',
+      `¿Deseas salir del turno de ${operario.nombre}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Salir',
+          style: 'destructive',
+          onPress: onCambiarOperario,
+        },
+      ],
+    );
   }
 
   return (
@@ -474,6 +638,8 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
           <BannerClasificacion
             categoria={clasificacion.categoria}
             confianza={clasificacion.confianza}
+            proveedor={clasificacion.proveedor}
+            tiempoMs={clasificacion.tiempoMs}
             onOcultar={() => setClasificacion(null)}
           />
         </View>
@@ -523,10 +689,16 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
               <Text style={styles.botonResumenTexto}>Resumen</Text>
             </Pressable>
             <Pressable
-              onPress={onCambiarOperario}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              accessibilityRole="button"
+              accessibilityLabel="Cerrar sesión y salir"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={({ pressed }) => [
+                styles.botonSalir,
+                pressed && styles.botonPresionado,
+              ]}
+              onPress={confirmarSalir}
             >
-              <Text style={styles.cambiar}>Cambiar</Text>
+              <Icon name="logout" size={17} color={COLOR.textMuted} />
             </Pressable>
           </View>
         </View>
@@ -546,49 +718,71 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                 perdiendo el TextInput a mitad de escritura. */}
             {!op.trim() || modoTecladoOp ? (
               <View style={styles.opCardVoz}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.btnVozOp,
-                    escuchandoOp && styles.btnVozOpEscuchando,
-                    pressed && styles.botonPresionado,
-                  ]}
-                  disabled={escuchandoOp}
-                  onPress={capturarOpPorVoz}
-                >
-                  <View
-                    style={[
-                      styles.iconoVozWrap,
-                      escuchandoOp && styles.iconoVozWrapEscuchando,
+                <View style={styles.filaAccionesOp}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.btnVozOp,
+                      escuchandoOp && styles.btnVozOpEscuchando,
+                      pressed && styles.botonPresionado,
                     ]}
+                    disabled={escuchandoOp}
+                    onPress={capturarOpPorVoz}
                   >
-                    <Icon
-                      name={escuchandoOp ? 'graphic-eq' : 'mic'}
-                      size={28}
-                      color="#ffffff"
-                    />
-                  </View>
-                  <View style={styles.textoVozWrap}>
-                    <Text style={styles.btnVozOpTitulo}>
-                      {escuchandoOp
-                        ? 'Escuchando tu voz…'
-                        : 'Dictar OP por audio'}
-                    </Text>
-                    <Text style={styles.btnVozOpSubtitulo}>
-                      {escuchandoOp
-                        ? 'Di los números ahora (ej. "62611")'
-                        : 'Toca aquí y di el número de orden'}
-                    </Text>
-                  </View>
-                </Pressable>
+                    <View
+                      style={[
+                        styles.iconoVozWrap,
+                        escuchandoOp && styles.iconoVozWrapEscuchando,
+                      ]}
+                    >
+                      <Icon
+                        name={escuchandoOp ? 'graphic-eq' : 'mic'}
+                        size={28}
+                        color="#ffffff"
+                      />
+                    </View>
+                    <View style={styles.textoVozWrap}>
+                      <Text style={styles.btnVozOpTitulo}>
+                        {escuchandoOp
+                          ? 'Escuchando tu voz…'
+                          : 'Dictar OP por audio'}
+                      </Text>
+                      <Text style={styles.btnVozOpSubtitulo}>
+                        {escuchandoOp
+                          ? 'Di los números ahora (ej. "62611")'
+                          : 'Toca aquí y di el número de orden'}
+                      </Text>
+                    </View>
+                  </Pressable>
 
-                {/* Respaldo de contingencia: solo si no hay micrófono o hay ruido extremo */}
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.btnEscanerOp,
+                      pressed && styles.botonPresionado,
+                    ]}
+                    onPress={() => setModalEscanerVisible(true)}
+                  >
+                    <View style={styles.iconoEscanerWrap}>
+                      <Icon name="qr-code-scanner" size={26} color={COLOR.brandDark} />
+                    </View>
+                    <View style={styles.textoVozWrap}>
+                      <Text style={styles.btnEscanerOpTitulo}>
+                        Escanear tarjeta física
+                      </Text>
+                      <Text style={styles.btnEscanerOpSubtitulo}>
+                        Lector de código de barras o QR
+                      </Text>
+                    </View>
+                  </Pressable>
+                </View>
+
+                {/* Respaldo ordenado y limpio para ingreso con teclado */}
                 {modoTecladoOp ? (
                   <View style={styles.modoTecladoWrap}>
                     <View style={styles.inputConIcono}>
                       <Icon
                         name="edit"
                         size={18}
-                        color={COLOR.textFaint}
+                        color={COLOR.brand}
                         style={styles.inputIcono}
                       />
                       <TextInput
@@ -597,6 +791,8 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                         onChangeText={v => {
                           setOp(v);
                           setOpPorVoz(false);
+                          setOpPorQr(false);
+                          setOpDetallePieza('');
                         }}
                         placeholder="Escribe la OP (ej. 62611)"
                         placeholderTextColor={COLOR.textFaint}
@@ -619,63 +815,118 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
                           if (op.trim()) setModoTecladoOp(false);
                         }}
                       />
+                      {op.trim() ? (
+                        <Pressable
+                          style={styles.btnConfirmarTeclado}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setModoTecladoOp(false);
+                          }}
+                        >
+                          <Text style={styles.btnConfirmarTecladoTexto}>Listo</Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                     <Pressable
-                      style={styles.linkTeclado}
+                      style={styles.btnOcultarTeclado}
                       onPress={() => setModoTecladoOp(false)}
                     >
-                      <Text style={styles.linkTecladoTexto}>
-                        Ocultar teclado manual
+                      <Icon name="close" size={14} color={COLOR.textMuted} />
+                      <Text style={styles.btnOcultarTecladoTexto}>
+                        Cancelar teclado manual
                       </Text>
                     </Pressable>
                   </View>
                 ) : (
                   <Pressable
-                    style={styles.linkTeclado}
+                    style={({ pressed }) => [
+                      styles.btnTecladoOpcion,
+                      pressed && styles.botonPresionado,
+                    ]}
                     onPress={() => setModoTecladoOp(true)}
                   >
-                    <Icon name="keyboard" size={14} color={COLOR.textFaint} />
-                    <Text style={styles.linkTecladoTexto}>
-                      ¿No puedes usar el micrófono? Escribir a mano
+                    <Icon name="keyboard" size={17} color={COLOR.textMuted} />
+                    <Text style={styles.btnTecladoOpcionTexto}>
+                      O escribir número de OP con teclado
                     </Text>
+                    <Icon name="chevron-right" size={16} color={COLOR.textFaint} />
                   </Pressable>
                 )}
               </View>
             ) : (
               <View style={styles.opConfirmadaCard}>
-                <View style={styles.opConfirmadaInfo}>
-                  <View style={styles.badgeVozWrap}>
-                    <Icon name="check-circle" size={14} color={COLOR.success} />
+                {/* Encabezado: Badge de origen + botón circular de borrar (X) */}
+                <View style={styles.opConfirmadaHeader}>
+                  <View style={styles.opConfirmadaBadgeWrap}>
+                    <Icon
+                      name={opPorQr ? 'qr-code-2' : opPorVoz ? 'mic' : 'check-circle'}
+                      size={14}
+                      color={COLOR.success}
+                    />
                     <Text style={styles.opConfirmadaBadge}>
-                      {opPorVoz ? 'Ingresada por voz' : 'Ingresada a mano'}
+                      {opPorQr
+                        ? 'Escaneada con Tarjeta (QR)'
+                        : opPorVoz
+                        ? 'Ingresada por voz'
+                        : 'Ingresada con teclado'}
                     </Text>
                   </View>
-                  <Text style={styles.opConfirmadaNumero}>OP# {op}</Text>
-                </View>
-                <View style={styles.opConfirmadaAcciones}>
                   <Pressable
-                    style={styles.opAccionBoton}
-                    onPress={capturarOpPorVoz}
-                    disabled={escuchandoOp}
-                  >
-                    <Icon name="mic" size={16} color={COLOR.brand} />
-                    <Text style={styles.opAccionBotonTexto}>Cambiar</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.opAccionBoton, styles.opAccionBorrar]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Borrar número de orden"
+                    style={({ pressed }) => [
+                      styles.btnBorrarOpCircular,
+                      pressed && styles.botonPresionado,
+                    ]}
                     onPress={() => {
                       setOp('');
                       setOpPorVoz(false);
+                      setOpPorQr(false);
+                      setOpDetallePieza('');
                     }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Icon name="close" size={16} color={COLOR.textMuted} />
-                    <Text
-                      style={[
-                        styles.opAccionBotonTexto,
-                        { color: COLOR.textMuted },
-                      ]}
-                    >
-                      Borrar
+                  </Pressable>
+                </View>
+
+                {/* Cuerpo: OP# grande y pieza */}
+                <View style={styles.opConfirmadaCuerpo}>
+                  <Text style={styles.opConfirmadaNumero}>OP# {op}</Text>
+                  {opDetallePieza ? (
+                    <View style={styles.opPiezaWrap}>
+                      <Icon name="build" size={13} color={COLOR.brandDark} />
+                      <Text style={styles.opConfirmadaDetallePieza}>
+                        {opDetallePieza}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Acciones de cambio ordenadas sin desbordamiento */}
+                <View style={styles.opConfirmadaAccionesFila}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.opAccionPill,
+                      pressed && styles.botonPresionado,
+                    ]}
+                    onPress={() => setModalEscanerVisible(true)}
+                  >
+                    <Icon name="qr-code-scanner" size={15} color={COLOR.brandDark} />
+                    <Text style={styles.opAccionPillTexto}>Cambiar por QR</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.opAccionPill,
+                      pressed && styles.botonPresionado,
+                    ]}
+                    onPress={capturarOpPorVoz}
+                    disabled={escuchandoOp}
+                  >
+                    <Icon name="mic" size={15} color={COLOR.brandDark} />
+                    <Text style={styles.opAccionPillTexto}>
+                      {escuchandoOp ? 'Escuchando...' : 'Cambiar por voz'}
                     </Text>
                   </Pressable>
                 </View>
@@ -683,23 +934,54 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
             )}
 
             <Text style={styles.labelConEspacio}>Máquina / puesto</Text>
-            <View style={styles.chips}>
-              {MAQUINAS.map(m => (
-                <Pressable
-                  key={m}
-                  style={[styles.chip, maquina === m && styles.chipActivo]}
-                  onPress={() => elegirMaquina(m)}
-                >
-                  <Text
-                    style={[
-                      styles.chipTexto,
-                      maquina === m && styles.chipTextoActivo,
+            <View style={styles.maquinasGrid}>
+              {MAQUINAS.map((m, index) => {
+                const seleccionada = maquina === m.nombre;
+                const esUltimo =
+                  index === MAQUINAS.length - 1 && MAQUINAS.length % 2 !== 0;
+                return (
+                  <Pressable
+                    key={m.id}
+                    style={({ pressed }) => [
+                      styles.tarjetaMaquina,
+                      esUltimo && styles.tarjetaMaquinaAnchoCompleto,
+                      seleccionada && styles.tarjetaMaquinaActiva,
+                      pressed && styles.botonPresionado,
                     ]}
+                    onPress={() => elegirMaquina(m.nombre)}
                   >
-                    {m}
-                  </Text>
-                </Pressable>
-              ))}
+                    <View
+                      style={[
+                        styles.tarjetaMaquinaIconoWrap,
+                        seleccionada && styles.tarjetaMaquinaIconoWrapActiva,
+                      ]}
+                    >
+                      <Icon
+                        name={m.icono}
+                        size={19}
+                        color={seleccionada ? '#ffffff' : COLOR.brandDark}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.tarjetaMaquinaTexto,
+                        seleccionada && styles.tarjetaMaquinaTextoActivo,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {m.nombre}
+                    </Text>
+                    {seleccionada ? (
+                      <Icon
+                        name="check-circle"
+                        size={17}
+                        color={COLOR.brand}
+                        style={styles.tarjetaMaquinaCheck}
+                      />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
             </View>
 
             <View style={styles.divisor} />
@@ -731,93 +1013,324 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
             </View>
           </View>
         ) : (
-          <View style={styles.card}>
-            <View style={styles.filaOp}>
-              <View style={styles.filaOpInfo}>
-                <Text style={styles.label}>OP en curso</Text>
-                <Text style={styles.opActiva}>OP# {segmento.op}</Text>
-                <Text style={styles.maquinaActiva}>{segmento.maquina}</Text>
-              </View>
+          (() => {
+            const estiloAndon = obtenerEstiloAndon(segmento.categoria);
+            const partesTiempo = (elapsedLabel || '00:00').split(':');
+            const minutosReloj = partesTiempo[0] || '00';
+            const segundosReloj = partesTiempo[1] || '00';
+            return (
               <View
                 style={[
-                  styles.pillCategoria,
+                  styles.card,
+                  styles.cardAndon,
                   {
-                    borderColor: colorCategoria(segmento.categoria),
-                    backgroundColor: colorCategoria(segmento.categoria) + '1A',
+                    borderColor: estiloAndon.andon.border,
+                    borderLeftColor: estiloAndon.andon.border,
+                    borderRightColor: estiloAndon.andon.border,
+                    borderTopColor: estiloAndon.andon.border,
+                    borderBottomColor: estiloAndon.andon.border,
+                    backgroundColor: estiloAndon.andon.bg,
                   },
                 ]}
               >
-                <Text
+                {/* Header Andon: Status pill with breathing pulse dot + OP and Machine */}
+                <View style={styles.andonHeader}>
+                  <View style={styles.filaOpInfo}>
+                    <Text style={styles.andonOpLabel}>ORDEN EN CURSO</Text>
+                    <Text style={styles.opActiva}>OP# {segmento.op}</Text>
+                    <View style={styles.maquinaBadgeWrap}>
+                      <Icon
+                        name="precision-manufacturing"
+                        size={15}
+                        color={COLOR.textMuted}
+                      />
+                      <Text style={styles.maquinaActiva}>
+                        {segmento.maquina}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Badge Andon con pulso luminoso */}
+                  <View
+                    style={[
+                      styles.andonBadge,
+                      {
+                        backgroundColor: estiloAndon.andon.badgeBg,
+                        borderColor: estiloAndon.andon.border,
+                      },
+                    ]}
+                  >
+                    <View style={styles.pulsoContenedor}>
+                      <Animated.View
+                        style={[
+                          styles.pulsoHalo,
+                          {
+                            backgroundColor: estiloAndon.andon.border,
+                            transform: [{ scale: pulsoAnim }],
+                            opacity: pulsoOpacidad,
+                          },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.pulsoPunto,
+                          { backgroundColor: estiloAndon.andon.border },
+                        ]}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.andonBadgeTexto,
+                        { color: estiloAndon.andon.badgeTexto },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {estiloAndon.etiquetaEstado}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Temporizador Cockpit Digital de Alta Precisión con Animaciones */}
+                <View
                   style={[
-                    styles.pillCategoriaTexto,
-                    { color: colorCategoria(segmento.categoria) },
+                    styles.timerCockpitContenedor,
+                    {
+                      borderColor: estiloAndon.andon.border,
+                      borderLeftColor: estiloAndon.andon.border,
+                      borderRightColor: estiloAndon.andon.border,
+                      borderTopColor: estiloAndon.andon.border,
+                      borderBottomColor: estiloAndon.andon.border,
+                    },
                   ]}
-                  numberOfLines={2}
                 >
-                  {segmento.categoria}
+                  {/* Encabezado del cronómetro con badge de estado en vivo */}
+                  <View style={styles.timerCockpitHeader}>
+                    <View style={styles.timerLiveIndicadorWrap}>
+                      <View style={styles.pulsoContenedor}>
+                        <Animated.View
+                          style={[
+                            styles.pulsoHalo,
+                            {
+                              backgroundColor: estiloAndon.andon.border,
+                              transform: [{ scale: pulsoAnim }],
+                              opacity: pulsoOpacidad,
+                            },
+                          ]}
+                        />
+                        <View
+                          style={[
+                            styles.pulsoPunto,
+                            { backgroundColor: estiloAndon.andon.border },
+                          ]}
+                        />
+                      </View>
+                      <Text
+                        style={[
+                          styles.timerCockpitTitulo,
+                          { color: estiloAndon.andon.texto },
+                        ]}
+                      >
+                        TIEMPO TRANSCURRIDO
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Display digital cockpit con dígitos separados y dos puntos parpadeantes */}
+                  <View style={styles.timerDisplayWrap}>
+                    {/* Bloque Minutos */}
+                    <View style={styles.timerBloqueTiempo}>
+                      <View
+                        style={[
+                          styles.timerCajaDigitos,
+                          {
+                            borderColor: estiloAndon.andon.border,
+                            backgroundColor: estiloAndon.andon.bg,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.timerDigitos,
+                            { color: estiloAndon.andon.texto },
+                          ]}
+                        >
+                          {minutosReloj}
+                        </Text>
+                      </View>
+                      <Text style={styles.timerUnidadLabel}>MINUTOS</Text>
+                    </View>
+
+                    {/* Separador animado de dos puntos con parpadeo rítmico */}
+                    <Animated.View
+                      style={[
+                        styles.timerSeparadorWrap,
+                        { opacity: colonOpacidadAnim },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.timerSeparadorTexto,
+                          { color: estiloAndon.andon.border },
+                        ]}
+                      >
+                        :
+                      </Text>
+                    </Animated.View>
+
+                    {/* Bloque Segundos */}
+                    <View style={styles.timerBloqueTiempo}>
+                      <View
+                        style={[
+                          styles.timerCajaDigitos,
+                          {
+                            borderColor: estiloAndon.andon.border,
+                            backgroundColor: estiloAndon.andon.bg,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.timerDigitos,
+                            { color: estiloAndon.andon.texto },
+                          ]}
+                        >
+                          {segundosReloj}
+                        </Text>
+                      </View>
+                      <Text style={styles.timerUnidadLabel}>SEGUNDOS</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* CAMBIO 2: Si NO está en producción (falla, material, setup, descanso),
+                    BOTÓN MASIVO DE REANUDAR PRODUCCIÓN para volver con 1 solo toque */}
+                {!estiloAndon.esProduccion ? (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.btnReanudarMasivo,
+                      pressed && styles.botonPresionado,
+                    ]}
+                    onPress={() => cambiarCategoriaSegmento('Producción Activa')}
+                  >
+                    <View style={styles.btnReanudarIconoWrap}>
+                      <Icon name="play-arrow" size={32} color="#ffffff" />
+                    </View>
+                    <View style={styles.btnReanudarTextoWrap}>
+                      <Text style={styles.btnReanudarTitulo}>
+                        ¡Listo, Reanudar Producción!
+                      </Text>
+                      <Text style={styles.btnReanudarSubtitulo}>
+                        Toca aquí para volver a marcar tiempo activo
+                      </Text>
+                    </View>
+                    <Icon name="arrow-forward" size={24} color="#ffffff" />
+                  </Pressable>
+                ) : null}
+
+                {/* CAMBIO 3: Tarjetas 2x2 para Guantes de Carnaza */}
+                <Text style={styles.seccionParadasTitulo}>
+                  {estiloAndon.esProduccion
+                    ? '¿Ocurrió alguna parada o novedad?'
+                    : 'O cambia la causa de la parada:'}
                 </Text>
-              </View>
-            </View>
 
-            <Text style={styles.timer}>{elapsedLabel}</Text>
+                <View style={styles.gridTarjetasParada}>
+                  {TARJETAS_PARADA.map(item => {
+                    const esSeleccionado = segmento.categoria === item.categoria;
+                    const andonItem = ANDON[item.tipo];
+                    return (
+                      <Pressable
+                        key={item.categoria}
+                        style={({ pressed }) => [
+                          styles.tarjetaParada,
+                          {
+                            backgroundColor: esSeleccionado
+                              ? andonItem.badgeBg
+                              : COLOR.surface,
+                            borderColor: esSeleccionado
+                              ? andonItem.border
+                              : COLOR.border,
+                            borderWidth: esSeleccionado ? 2 : 1,
+                          },
+                          pressed && styles.botonPresionado,
+                        ]}
+                        onPress={() => cambiarCategoriaSegmento(item.categoria)}
+                      >
+                        <View style={styles.tarjetaParadaHeader}>
+                          <View
+                            style={[
+                              styles.tarjetaParadaIconoWrap,
+                              { backgroundColor: andonItem.badgeBg },
+                            ]}
+                          >
+                            <Icon
+                              name={item.icono}
+                              size={20}
+                              color={andonItem.texto}
+                            />
+                          </View>
+                          {esSeleccionado && (
+                            <View style={styles.badgeParadaActiva}>
+                              <Text style={styles.badgeParadaActivaTexto}>
+                                ACTIVO
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.tarjetaParadaTitulo} numberOfLines={1}>
+                          {item.etiqueta}
+                        </Text>
+                        <Text
+                          style={styles.tarjetaParadaSubtitulo}
+                          numberOfLines={1}
+                        >
+                          {item.subtitulo}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
 
-            {/* Nivel 1 — primaria: reportar novedad por voz. */}
-            <BotonAccion
-              icono="mic"
-              texto="Pausar / reportar novedad"
-              variante="primaria"
-              onPress={() => setModalVisible('novedad')}
-            />
-
-            {/* Respaldo: 1 toque directo sin pasar por texto ni IA. */}
-            <Text style={styles.subLabelCentrado}>
-              ¿No quieres hablar? Toca la causa directa
-            </Text>
-            <View style={styles.filaCausasRapidas}>
-              {CAUSAS_RAPIDAS.map(c => (
+                {/* Dictar otra novedad a la IA (Groq) */}
                 <Pressable
-                  key={c.categoria}
-                  style={styles.causaRapida}
-                  onPress={() => cambiarCategoriaSegmento(c.categoria)}
+                  style={({ pressed }) => [
+                    styles.btnDictarIa,
+                    pressed && styles.botonPresionado,
+                  ]}
+                  onPress={() => setModalVisible('novedad')}
                 >
-                  <Icon name={c.icono} size={18} color={COLOR.textMuted} />
-                  <Text style={styles.causaRapidaTexto} numberOfLines={1}>
-                    {c.etiqueta}
+                  <View style={styles.btnDictarIaIconoWrap}>
+                    <Icon name="mic" size={20} color={COLOR.brandDark} />
+                  </View>
+                  <View style={styles.btnDictarIaTextoWrap}>
+                    <Text style={styles.btnDictarIaTitulo}>
+                      Dictar otra novedad a la IA
+                    </Text>
+                    <Text style={styles.btnDictarIaSubtitulo}>
+                      Clasifica automáticamente con Groq AI
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={20} color={COLOR.brandDark} />
+                </Pressable>
+
+                <View style={styles.divisorAndon} />
+
+                {/* Finalizar OP */}
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.btnFinalizarOp,
+                    pressed && styles.botonPresionado,
+                  ]}
+                  onPress={finalizarOp}
+                >
+                  <Icon name="stop-circle" size={18} color={COLOR.danger} />
+                  <Text style={styles.btnFinalizarOpTexto}>
+                    Finalizar Orden de Producción
                   </Text>
                 </Pressable>
-              ))}
-            </View>
-
-            {/* Nivel 2 — secundaria: salir un momento / reanudar. */}
-            {segmento.categoria === CATEGORIA_AUSENCIA ? (
-              <BotonAccion
-                icono="play-arrow"
-                texto="Volví, reanudar Producción Activa"
-                variante="secundaria"
-                estiloExtra={styles.botonConEspacio}
-                onPress={() => cambiarCategoriaSegmento('Producción Activa')}
-              />
-            ) : (
-              <BotonAccion
-                icono="exit-to-app"
-                texto="Salgo un momento"
-                variante="secundaria"
-                estiloExtra={styles.botonConEspacio}
-                onPress={() => cambiarCategoriaSegmento(CATEGORIA_AUSENCIA)}
-              />
-            )}
-
-            <View style={styles.divisor} />
-
-            {/* Nivel 3 — terciaria: cierre de la OP. */}
-            <BotonAccion
-              icono="stop-circle"
-              texto="Finalizar OP"
-              variante="terciaria"
-              colorTerciaria={COLOR.danger}
-              onPress={finalizarOp}
-            />
-          </View>
+              </View>
+            );
+          })()
         )}
 
         {sincronizando && (
@@ -852,6 +1365,11 @@ export default function CapturaScreen({ operario, onCambiarOperario }: Props) {
         maquina={maquinaResumen}
         onCerrar={() => setResumenVisible(false)}
       />
+      <ModalEscanerOP
+        visible={modalEscanerVisible}
+        onCerrar={() => setModalEscanerVisible(false)}
+        onDetectarOp={alEscanearOp}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -860,8 +1378,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FAF8F3' },
   container: { flex: 1 },
   scrollContent: {
-    paddingHorizontal: SPACE.xl,
-    paddingBottom: SPACE.xxl,
+    paddingHorizontal: SPACE.lg,
+    paddingBottom: SPACE.xxl * 2,
     width: '100%',
     maxWidth: 480,
     alignSelf: 'center',
@@ -873,11 +1391,11 @@ const styles = StyleSheet.create({
   },
   headerMarca: { flexDirection: 'row', alignItems: 'center', gap: SPACE.xs },
   headerAcciones: { flexDirection: 'row', alignItems: 'center', gap: SPACE.sm },
-  logoIsotipo: { width: 20, height: 20, borderRadius: 5 },
+  logoIsotipo: { width: 22, height: 22, borderRadius: 5 },
   marca: {
     color: COLOR.textFaint,
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: FONT.bold,
     letterSpacing: 1.2,
   },
   botonResumen: {
@@ -885,7 +1403,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: SPACE.sm + 2,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: RADIUS.pill,
     backgroundColor: COLOR.brandTint,
     borderWidth: 1,
@@ -894,64 +1412,75 @@ const styles = StyleSheet.create({
   botonResumenTexto: {
     color: COLOR.brandDark,
     fontSize: 11,
-    fontWeight: '800',
+    fontFamily: FONT.bold,
   },
-  cambiar: { color: COLOR.brand, fontSize: 13, fontWeight: '700' },
-  headerOperario: { marginTop: SPACE.sm, marginBottom: SPACE.xl },
-  saludo: { color: COLOR.text, fontSize: 20, fontWeight: '800' },
-  cedula: { color: COLOR.textMuted, fontSize: 13, marginTop: 2 },
+  botonSalir: {
+    width: 32,
+    height: 32,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.surface,
+    borderWidth: 1,
+    borderColor: COLOR.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerOperario: { marginTop: SPACE.xs, marginBottom: SPACE.md },
+  saludo: { color: COLOR.text, fontSize: 20, fontFamily: FONT.bold },
+  cedula: { color: COLOR.textMuted, fontSize: 13, marginTop: 1, fontFamily: FONT.regular },
   card: {
     backgroundColor: COLOR.surface,
     borderRadius: RADIUS.lg,
-    padding: SPACE.xl,
+    padding: SPACE.lg,
     borderWidth: 1,
     borderColor: COLOR.border,
     shadowColor: COLOR.ink,
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.sm },
+  label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.xs + 2, fontFamily: FONT.medium },
   labelConEspacio: {
     color: COLOR.textMuted,
     fontSize: 13,
-    marginBottom: SPACE.sm,
-    marginTop: SPACE.xl,
+    marginBottom: SPACE.xs + 2,
+    marginTop: SPACE.md,
+    fontFamily: FONT.medium,
   },
   subLabelCentrado: {
     color: COLOR.textFaint,
     fontSize: 12,
     textAlign: 'center',
-    marginTop: SPACE.md,
+    marginTop: SPACE.sm,
     marginBottom: SPACE.xs,
+    fontFamily: FONT.regular,
   },
 
   // --- Estilos de Captura de OP por Voz ---
   opCardVoz: {
-    gap: SPACE.sm,
+    gap: 8,
   },
   btnVozOp: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLOR.brand,
     borderRadius: RADIUS.md,
-    paddingVertical: SPACE.md + 2,
-    paddingHorizontal: SPACE.lg,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.md + 2,
     gap: SPACE.md,
     shadowColor: COLOR.brand,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 3,
   },
   btnVozOpEscuchando: {
     backgroundColor: COLOR.warn,
   },
   iconoVozWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: 'rgba(255, 255, 255, 0.22)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -964,36 +1493,104 @@ const styles = StyleSheet.create({
   },
   btnVozOpTitulo: {
     color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.3,
+    fontSize: 15,
+    fontFamily: FONT.bold,
+    letterSpacing: 0.2,
   },
   btnVozOpSubtitulo: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: 'rgba(255, 255, 255, 0.9)',
     fontSize: 12,
+    marginTop: 1,
+    fontFamily: FONT.regular,
+  },
+  filaAccionesOp: {
+    gap: 8,
+  },
+  btnEscanerOp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLOR.brandTint,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.md + 2,
+    gap: SPACE.md,
+    borderWidth: 1.5,
+    borderColor: '#F4D1AC',
+  },
+  iconoEscanerWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: COLOR.brand,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  btnEscanerOpTitulo: {
+    color: COLOR.brandDark,
+    fontSize: 15,
+    fontFamily: FONT.bold,
+  },
+  btnEscanerOpSubtitulo: {
+    color: COLOR.textMuted,
+    fontSize: 12,
+    marginTop: 1,
+    fontFamily: FONT.regular,
+  },
+
+  // --- Barra de opción de teclado manual ---
+  btnTecladoOpcion: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 9,
+    paddingHorizontal: SPACE.md,
+    backgroundColor: COLOR.bgElevated,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLOR.border,
     marginTop: 2,
   },
-  linkTeclado: {
+  btnTecladoOpcionTexto: {
+    color: COLOR.textMuted,
+    fontSize: 13,
+    fontFamily: FONT.medium,
+  },
+  modoTecladoWrap: {
+    marginTop: 4,
+    gap: 6,
+  },
+  btnConfirmarTeclado: {
+    backgroundColor: COLOR.brand,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: 8,
+    marginLeft: SPACE.xs,
+  },
+  btnConfirmarTecladoTexto: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontFamily: FONT.bold,
+  },
+  btnOcultarTeclado: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: SPACE.xs,
-    marginTop: 2,
+    paddingVertical: 4,
   },
-  linkTecladoTexto: {
-    color: COLOR.textFaint,
+  btnOcultarTecladoTexto: {
+    color: COLOR.textMuted,
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FONT.medium,
   },
-  modoTecladoWrap: {
-    marginTop: SPACE.xs,
-    gap: SPACE.xs,
-  },
+
   opConfirmadaCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: COLOR.bgElevated,
     borderRadius: RADIUS.md,
     padding: SPACE.md,
@@ -1001,52 +1598,76 @@ const styles = StyleSheet.create({
     borderColor: COLOR.brandTint,
     borderLeftWidth: 4,
     borderLeftColor: COLOR.brand,
+    gap: SPACE.sm,
   },
-  opConfirmadaInfo: {
-    flex: 1,
-  },
-  badgeVozWrap: {
+  opConfirmadaHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 2,
+    justifyContent: 'space-between',
+  },
+  opConfirmadaBadgeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flex: 1,
   },
   opConfirmadaBadge: {
     color: COLOR.success,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: FONT.bold,
+  },
+  btnBorrarOpCircular: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  opConfirmadaCuerpo: {
+    paddingVertical: 2,
   },
   opConfirmadaNumero: {
     color: COLOR.text,
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 26,
+    fontFamily: FONT.bold,
     letterSpacing: 0.5,
     fontVariant: ['tabular-nums'],
   },
-  opConfirmadaAcciones: {
+  opPiezaWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACE.xs,
+    gap: 5,
+    marginTop: 4,
   },
-  opAccionBoton: {
+  opConfirmadaDetallePieza: {
+    color: COLOR.brandDarker,
+    fontSize: 13,
+    fontFamily: FONT.medium,
+  },
+  opConfirmadaAccionesFila: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: SPACE.xs + 2,
-    paddingHorizontal: SPACE.sm + 2,
+    gap: SPACE.sm,
+    marginTop: 4,
+  },
+  opAccionPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: SPACE.sm,
     backgroundColor: COLOR.surface,
     borderRadius: RADIUS.sm,
     borderWidth: 1,
     borderColor: COLOR.border,
   },
-  opAccionBorrar: {
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
-  },
-  opAccionBotonTexto: {
-    color: COLOR.brand,
+  opAccionPillTexto: {
+    color: COLOR.brandDark,
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: FONT.bold,
   },
 
   inputConIcono: {
@@ -1064,33 +1685,309 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE.md,
     fontSize: 16,
     color: COLOR.text,
+    fontFamily: FONT.regular,
   },
   divisor: {
     height: 1,
     backgroundColor: COLOR.border,
-    marginVertical: SPACE.xl,
+    marginVertical: SPACE.md,
   },
-  filaCausasRapidas: { flexDirection: 'row', gap: SPACE.sm },
-  causaRapida: {
-    flex: 1,
+  // --- Estilos Semáforo Andon y Tarjetas de Taller ---
+  cardAndon: {
+    borderWidth: 2,
+    borderLeftWidth: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  andonHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: SPACE.sm,
+  },
+  andonOpLabel: {
+    color: COLOR.textMuted,
+    fontSize: 11,
+    fontFamily: FONT.bold,
+    letterSpacing: 1,
+  },
+  maquinaBadgeWrap: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: SPACE.sm,
-    borderRadius: RADIUS.sm,
-    backgroundColor: COLOR.bgElevated,
-    borderWidth: 1,
-    borderColor: COLOR.border,
+    marginTop: 4,
   },
-  causaRapidaTexto: { color: COLOR.textMuted, fontSize: 11, fontWeight: '600' },
+  andonBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: SPACE.md,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.5,
+  },
+  pulsoContenedor: {
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulsoHalo: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  pulsoPunto: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  andonBadgeTexto: {
+    fontSize: 11,
+    fontFamily: FONT.bold,
+    letterSpacing: 0.4,
+  },
+
+  // --- Cronómetro Cockpit Digital Animado ---
+  timerCockpitContenedor: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: SPACE.md,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.lg,
+    borderRadius: RADIUS.lg,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderLeftWidth: 2,
+    shadowColor: COLOR.ink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  timerCockpitHeader: {
+    marginBottom: SPACE.sm,
+  },
+  timerLiveIndicadorWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  timerCockpitTitulo: {
+    fontSize: 11,
+    fontFamily: FONT.bold,
+    letterSpacing: 1.2,
+  },
+  timerDisplayWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  timerBloqueTiempo: {
+    alignItems: 'center',
+  },
+  timerCajaDigitos: {
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderWidth: 1.5,
+    minWidth: 86,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerDigitos: {
+    fontSize: 40,
+    fontFamily: FONT.bold,
+    letterSpacing: 1,
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  timerUnidadLabel: {
+    fontSize: 9,
+    fontFamily: FONT.bold,
+    color: COLOR.textMuted,
+    letterSpacing: 0.8,
+    marginTop: 4,
+  },
+  timerSeparadorWrap: {
+    paddingBottom: 16,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerSeparadorTexto: {
+    fontSize: 36,
+    fontFamily: FONT.bold,
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+
+  // CAMBIO 2: Botón Masivo Reanudar Producción
+  btnReanudarMasivo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16A34A',
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE.md + 2,
+    paddingHorizontal: SPACE.lg,
+    gap: SPACE.md,
+    marginVertical: SPACE.sm,
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  btnReanudarIconoWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  btnReanudarTextoWrap: {
+    flex: 1,
+  },
+  btnReanudarTitulo: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontFamily: FONT.bold,
+  },
+  btnReanudarSubtitulo: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 11,
+    marginTop: 2,
+    fontFamily: FONT.regular,
+  },
+
+  // CAMBIO 3: Tarjetas 2x2 para Guantes de Carnaza
+  seccionParadasTitulo: {
+    color: COLOR.text,
+    fontSize: 13,
+    fontFamily: FONT.bold,
+    marginTop: SPACE.md,
+    marginBottom: SPACE.sm,
+  },
+  gridTarjetasParada: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACE.sm,
+    justifyContent: 'space-between',
+  },
+  tarjetaParada: {
+    width: '48.5%',
+    minHeight: 82,
+    borderRadius: RADIUS.md,
+    padding: SPACE.md,
+    justifyContent: 'space-between',
+    shadowColor: COLOR.ink,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  tarjetaParadaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  tarjetaParadaIconoWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeParadaActiva: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLOR.ink,
+  },
+  badgeParadaActivaTexto: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontFamily: FONT.bold,
+  },
+  tarjetaParadaTitulo: {
+    color: COLOR.text,
+    fontSize: 13,
+    fontFamily: FONT.bold,
+  },
+  tarjetaParadaSubtitulo: {
+    color: COLOR.textMuted,
+    fontSize: 10,
+    marginTop: 2,
+    fontFamily: FONT.regular,
+  },
+
+  // Botón dictar novedad a Groq AI
+  btnDictarIa: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLOR.surface,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.md,
+    borderWidth: 1.5,
+    borderColor: '#F4D1AC',
+    gap: SPACE.md,
+    marginTop: SPACE.md,
+  },
+  btnDictarIaIconoWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLOR.brandTint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnDictarIaTextoWrap: {
+    flex: 1,
+  },
+  btnDictarIaTitulo: {
+    color: COLOR.brandDark,
+    fontSize: 13,
+    fontFamily: FONT.bold,
+  },
+  btnDictarIaSubtitulo: {
+    color: COLOR.textMuted,
+    fontSize: 11,
+    marginTop: 1,
+    fontFamily: FONT.regular,
+  },
+  divisorAndon: {
+    height: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    marginVertical: SPACE.lg,
+  },
+  btnFinalizarOp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: SPACE.sm,
+  },
+  btnFinalizarOpTexto: {
+    color: COLOR.danger,
+    fontSize: 13,
+    fontFamily: FONT.bold,
+  },
+
   filaSecundarias: { flexDirection: 'row', gap: SPACE.sm, marginTop: SPACE.sm },
   mitad: { flex: 1 },
   boton: {
     borderRadius: RADIUS.sm,
-    padding: SPACE.lg,
+    paddingVertical: SPACE.md,
+    paddingHorizontal: SPACE.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 48,
   },
   boton_primaria: { backgroundColor: COLOR.brand },
   boton_secundaria: {
@@ -1108,60 +2005,85 @@ const styles = StyleSheet.create({
   botonConEspacio: { marginTop: SPACE.sm },
   botonIcono: { marginRight: SPACE.sm },
   botonTexto: {
-    fontWeight: '700',
     fontSize: 15,
     flexShrink: 1,
     textAlign: 'center',
+    fontFamily: FONT.bold,
   },
-  botonTextoTerciaria: { fontSize: 13, fontWeight: '600' },
+  botonTextoTerciaria: { fontSize: 13, fontFamily: FONT.medium },
   bannerWrap: {
     position: 'absolute',
-    left: SPACE.xl,
-    right: SPACE.xl,
+    left: SPACE.lg,
+    right: SPACE.lg,
     zIndex: 20,
   },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE.sm },
-  chip: {
+
+  // --- Cuadrícula Ergonómica de Máquinas ---
+  maquinasGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  tarjetaMaquina: {
+    width: '48.5%',
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: RADIUS.pill,
-    paddingVertical: SPACE.md,
-    paddingHorizontal: SPACE.lg,
-    backgroundColor: COLOR.bgElevated,
-    borderWidth: 1,
+    backgroundColor: COLOR.surface,
+    borderRadius: RADIUS.md,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 1.5,
     borderColor: COLOR.border,
-    minHeight: 44,
+    minHeight: 52,
+    gap: 8,
+  },
+  tarjetaMaquinaAnchoCompleto: {
+    width: '100%',
+  },
+  tarjetaMaquinaActiva: {
+    borderColor: COLOR.brand,
+    backgroundColor: COLOR.brandTint,
+    shadowColor: COLOR.brand,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  tarjetaMaquinaIconoWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLOR.bgElevated,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  chipActivo: { backgroundColor: COLOR.brand, borderColor: COLOR.brand },
-  chipTexto: { color: COLOR.textMuted, fontSize: 14 },
-  chipTextoActivo: { color: '#ffffff', fontWeight: '700' },
-  filaOp: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE.md },
-  filaOpInfo: { flex: 1 },
-  pillCategoria: {
-    borderRadius: RADIUS.pill,
-    borderWidth: 1,
-    paddingVertical: SPACE.xs,
-    paddingHorizontal: SPACE.md,
-    maxWidth: 150,
+  tarjetaMaquinaIconoWrapActiva: {
+    backgroundColor: COLOR.brand,
   },
-  pillCategoriaTexto: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  maquinaActiva: { color: COLOR.textMuted, fontSize: 14, marginTop: 2 },
+  tarjetaMaquinaTexto: {
+    flex: 1,
+    color: COLOR.textMuted,
+    fontSize: 13,
+    fontFamily: FONT.medium,
+  },
+  tarjetaMaquinaTextoActivo: {
+    color: COLOR.brandDarker,
+    fontFamily: FONT.bold,
+  },
+  tarjetaMaquinaCheck: {
+    marginLeft: 'auto',
+  },
+
+  filaOpInfo: { flex: 1 },
+  maquinaActiva: { color: COLOR.textMuted, fontSize: 13, fontFamily: FONT.medium },
   opActiva: {
     color: COLOR.text,
-    fontSize: 24,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  timer: {
-    color: COLOR.text,
-    fontSize: 44,
-    fontWeight: '200',
-    marginTop: SPACE.xl,
-    marginBottom: SPACE.lg,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
+    fontSize: 22,
+    marginTop: 2,
+    fontFamily: FONT.bold,
+    letterSpacing: 0.5,
   },
   esperaWrap: { marginTop: SPACE.lg, alignItems: 'center' },
-  esperaTexto: { color: COLOR.textMuted, fontSize: 13, marginTop: SPACE.sm },
+  esperaTexto: { color: COLOR.textMuted, fontSize: 13, marginTop: SPACE.sm, fontFamily: FONT.regular },
 });

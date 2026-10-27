@@ -1,14 +1,15 @@
 import { buscarOperarioDemo, OPERARIOS_DEMO } from '../src/operariosDemo';
 
 describe('operarios de demostración', () => {
-  it('incluye exactamente tres perfiles de pitch', () => {
-    expect(OPERARIOS_DEMO).toHaveLength(3);
+  it('incluye el perfil de pitch de Maria Gomez', () => {
+    expect(OPERARIOS_DEMO).toHaveLength(1);
+    expect(OPERARIOS_DEMO[0].nombre).toBe('Maria Gomez');
   });
 
   it('encuentra un operario por su cédula exacta', () => {
-    expect(buscarOperarioDemo('72234621')).toEqual({
-      cedula: '72234621',
-      nombre: 'Juan Perez',
+    expect(buscarOperarioDemo('1098765432')).toEqual({
+      cedula: '1098765432',
+      nombre: 'Maria Gomez',
     });
   });
 

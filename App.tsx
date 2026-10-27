@@ -10,12 +10,14 @@ import { StatusBar, View, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import LoginScreen from './src/screens/LoginScreen';
 import CapturaScreen from './src/screens/CapturaScreen';
+import SplashScreen from './src/screens/SplashScreen';
 import { Operario, guardarOperario, obtenerOperario, limpiarOperario } from './src/storage';
 import { COLOR } from './src/theme';
 
 function App() {
   const [operario, setOperario] = useState<Operario | null>(null);
   const [cargando, setCargando] = useState(true);
+  const [mostrarSplash, setMostrarSplash] = useState(true);
 
   useEffect(() => {
     obtenerOperario().then((op) => {
@@ -37,7 +39,9 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" />
-      {cargando ? (
+      {mostrarSplash ? (
+        <SplashScreen onFinish={() => setMostrarSplash(false)} />
+      ) : cargando ? (
         <View style={styles.loading}>
           <ActivityIndicator color={COLOR.brand} size="large" />
         </View>

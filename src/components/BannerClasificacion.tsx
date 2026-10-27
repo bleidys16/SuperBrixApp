@@ -2,11 +2,13 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { colorCategoria } from '../categorias';
-import { COLOR, RADIUS, SPACE } from '../theme';
+import { COLOR, FONT, RADIUS, SPACE } from '../theme';
 
 interface Props {
   categoria: string;
   confianza: string;
+  proveedor?: string;
+  tiempoMs?: number;
   onOcultar: () => void;
 }
 
@@ -24,7 +26,13 @@ const ETIQUETA_CONFIANZA: Record<string, string> = {
  * contra el criterio de "fricción mínima"; este banner aparece flotando
  * arriba, se lee en un vistazo y se oculta solo a los 4 segundos.
  */
-export default function BannerClasificacion({ categoria, confianza, onOcultar }: Props) {
+export default function BannerClasificacion({
+  categoria,
+  confianza,
+  proveedor,
+  tiempoMs,
+  onOcultar,
+}: Props) {
   const opacidad = useRef(new Animated.Value(0)).current;
   const desplazamiento = useRef(new Animated.Value(-12)).current;
 
@@ -35,12 +43,18 @@ export default function BannerClasificacion({ categoria, confianza, onOcultar }:
     ]).start();
     const timeout = setTimeout(() => {
       Animated.timing(opacidad, { toValue: 0, duration: 220, useNativeDriver: true }).start(onOcultar);
-    }, 4000);
+    }, 4500);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoria, confianza]);
 
   const acento = colorCategoria(categoria);
+  const detalleProveedor =
+    proveedor === 'groq' && tiempoMs
+      ? `⚡ Groq IA (${tiempoMs} ms) · ${ETIQUETA_CONFIANZA[confianza] || confianza}`
+      : proveedor === 'groq'
+      ? `⚡ Groq IA · ${ETIQUETA_CONFIANZA[confianza] || confianza}`
+      : ETIQUETA_CONFIANZA[confianza] || confianza;
 
   return (
     <Animated.View
@@ -52,7 +66,7 @@ export default function BannerClasificacion({ categoria, confianza, onOcultar }:
       <Animated.View style={styles.texto}>
         <Text style={styles.etiqueta}>La IA clasificó esto como</Text>
         <Text style={styles.categoria} numberOfLines={2}>{categoria}</Text>
-        <Text style={[styles.confianza, { color: acento }]}>{ETIQUETA_CONFIANZA[confianza] || confianza}</Text>
+        <Text style={[styles.confianza, { color: acento }]}>{detalleProveedor}</Text>
       </Animated.View>
     </Animated.View>
   );
@@ -74,7 +88,7 @@ const styles = StyleSheet.create({
   },
   icono: { marginRight: SPACE.sm, marginTop: 1 },
   texto: { flex: 1 },
-  etiqueta: { color: COLOR.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },
-  categoria: { color: COLOR.text, fontSize: 16, fontWeight: '700', marginTop: 2 },
-  confianza: { fontSize: 12, marginTop: 3, fontWeight: '600' },
+  etiqueta: { color: COLOR.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, fontFamily: FONT.medium },
+  categoria: { color: COLOR.text, fontSize: 16, fontFamily: FONT.bold, marginTop: 2 },
+  confianza: { fontSize: 12, marginTop: 3, fontFamily: FONT.semiBold },
 });

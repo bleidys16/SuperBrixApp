@@ -10,10 +10,15 @@ import {
   Platform,
   Image,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Operario, buscarNombrePorCedula, recordarOperario } from '../storage';
 import { OPERARIOS_DEMO, buscarOperarioDemo } from '../operariosDemo';
-import { COLOR, RADIUS, SPACE } from '../theme';
+import { COLOR, FONT, RADIUS, SPACE } from '../theme';
+import { dictarAudio } from '../nativo/voz';
+import { extraerNumeroOp } from '../utils/numeroVoz';
 
 interface Props {
   onIngresar: (operario: Operario) => void;
@@ -28,9 +33,20 @@ export default function LoginScreen({ onIngresar }: Props) {
   const [nombre, setNombre] = useState('');
   const [reconocido, setReconocido] = useState(false);
   const [operacionPendiente, setOperacionPendiente] = useState(false);
+  const [escuchandoCedula, setEscuchandoCedula] = useState(false);
+  const [escuchandoNombre, setEscuchandoNombre] = useState(false);
 
   const operarioDemo = buscarOperarioDemo(cedula);
   const puedeContinuar = cedula.trim().length > 0 && nombre.trim().length > 0;
+
+  function capitalizarNombre(texto: string): string {
+    return texto
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ');
+  }
 
   /**
    * Si este celular ya vio esta cédula antes, autocompleta el nombre — no es
@@ -82,6 +98,63 @@ export default function LoginScreen({ onIngresar }: Props) {
     await ingresarOperario(op);
   }
 
+  async function dictarCedulaPorVoz() {
+    Keyboard.dismiss();
+    setEscuchandoCedula(true);
+    try {
+      const texto = await dictarAudio('Di tu número de cédula');
+      const digitos = extraerNumeroOp(texto) || texto.replace(/\D/g, '');
+      if (digitos) {
+        setCedula(digitos);
+        setReconocido(false);
+        const demo = buscarOperarioDemo(digitos);
+        if (demo) {
+          setNombre(demo.nombre);
+          setReconocido(true);
+        } else {
+          await completarCredenciales(digitos);
+        }
+      } else {
+        Alert.alert(
+          'Cédula no reconocida',
+          `Escuchamos: "${texto}". Por favor repite claramente los números de tu cédula.`,
+        );
+      }
+    } catch (err: unknown) {
+      const mensaje = err instanceof Error ? err.message : String(err);
+      if (!mensaje.includes('cancelado') && !mensaje.includes('CANCELADO')) {
+        Alert.alert('Dictado por voz', mensaje);
+      }
+    } finally {
+      setEscuchandoCedula(false);
+    }
+  }
+
+  async function dictarNombrePorVoz() {
+    Keyboard.dismiss();
+    setEscuchandoNombre(true);
+    try {
+      const texto = await dictarAudio('Di tu nombre y apellido');
+      if (texto && texto.trim()) {
+        const nombreLimpio = capitalizarNombre(texto);
+        setNombre(nombreLimpio);
+        setReconocido(false);
+      } else {
+        Alert.alert(
+          'Nombre no reconocido',
+          'Por favor di claramente tu nombre y apellidos.',
+        );
+      }
+    } catch (err: unknown) {
+      const mensaje = err instanceof Error ? err.message : String(err);
+      if (!mensaje.includes('cancelado') && !mensaje.includes('CANCELADO')) {
+        Alert.alert('Dictado por voz', mensaje);
+      }
+    } finally {
+      setEscuchandoNombre(false);
+    }
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -102,25 +175,43 @@ export default function LoginScreen({ onIngresar }: Props) {
 
         <View style={styles.form}>
           <Text style={styles.label}>Cédula del empleado</Text>
-          <TextInput
-            style={styles.input}
-            value={cedula}
-            onChangeText={async (v) => {
-              setCedula(v);
-              setReconocido(false);
-              const demo = buscarOperarioDemo(v);
-              if (demo) {
-                setNombre(demo.nombre);
-                setReconocido(true);
-              } else if (operarioDemo) {
-                setNombre('');
-              }
-            }}
-            onBlur={alSalirDeCedula}
-            keyboardType="number-pad"
-            placeholder="Ej. 72234621"
-            placeholderTextColor={COLOR.textFaint}
-          />
+          <View style={styles.campoConMic}>
+            <TextInput
+              style={styles.inputConMic}
+              value={cedula}
+              onChangeText={async (v) => {
+                setCedula(v);
+                setReconocido(false);
+                const demo = buscarOperarioDemo(v);
+                if (demo) {
+                  setNombre(demo.nombre);
+                  setReconocido(true);
+                } else if (operarioDemo) {
+                  setNombre('');
+                }
+              }}
+              onBlur={alSalirDeCedula}
+              keyboardType="number-pad"
+              placeholder="Ej. 1098765432"
+              placeholderTextColor={COLOR.textFaint}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dictar cédula por voz"
+              style={({ pressed }) => [
+                styles.btnMicInput,
+                escuchandoCedula && styles.btnMicInputActivo,
+                pressed && styles.botonPresionado,
+              ]}
+              disabled={escuchandoCedula || escuchandoNombre}
+              onPress={dictarCedulaPorVoz}>
+              {escuchandoCedula ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Icon name="mic" size={20} color={COLOR.brandDark} />
+              )}
+            </Pressable>
+          </View>
           {operarioDemo && (
             <View style={styles.demoDetectado}>
               <Text style={styles.demoDetectadoIcono}>✓</Text>
@@ -132,16 +223,34 @@ export default function LoginScreen({ onIngresar }: Props) {
           )}
 
           <Text style={styles.label}>Nombre y apellidos</Text>
-          <TextInput
-            style={styles.input}
-            value={nombre}
-            onChangeText={(v) => {
-              setNombre(v);
-              setReconocido(false);
-            }}
-            placeholder="Ej. Juan Pérez"
-            placeholderTextColor={COLOR.textFaint}
-          />
+          <View style={styles.campoConMic}>
+            <TextInput
+              style={styles.inputConMic}
+              value={nombre}
+              onChangeText={(v) => {
+                setNombre(v);
+                setReconocido(false);
+              }}
+              placeholder="Ej. Maria Gomez"
+              placeholderTextColor={COLOR.textFaint}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dictar nombre por voz"
+              style={({ pressed }) => [
+                styles.btnMicInput,
+                escuchandoNombre && styles.btnMicInputActivo,
+                pressed && styles.botonPresionado,
+              ]}
+              disabled={escuchandoCedula || escuchandoNombre}
+              onPress={dictarNombrePorVoz}>
+              {escuchandoNombre ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Icon name="mic" size={20} color={COLOR.brandDark} />
+              )}
+            </Pressable>
+          </View>
           {reconocido && (
             <Text style={styles.reconocido}>✓ Te reconocimos por tu cédula en este celular</Text>
           )}
@@ -166,8 +275,8 @@ export default function LoginScreen({ onIngresar }: Props) {
               <Text style={styles.demoBadgeTexto}>DEMO</Text>
             </View>
             <View style={styles.accesoRapidoTitulos}>
-              <Text style={styles.accesoRapidoTitulo}>Accesos rápidos</Text>
-              <Text style={styles.accesoRapidoSubtitulo}>Toca un operario: solo coloca su cédula y el nombre se completa automáticamente.</Text>
+              <Text style={styles.accesoRapidoTitulo}>Acceso rápido</Text>
+              <Text style={styles.accesoRapidoSubtitulo}>Toca el perfil de Maria Gomez para iniciar turno en un solo toque.</Text>
             </View>
           </View>
 
@@ -236,6 +345,7 @@ const styles = StyleSheet.create({
     color: COLOR.textMuted,
     textAlign: 'center',
     letterSpacing: 0.2,
+    fontFamily: FONT.regular,
   },
   form: {
     backgroundColor: COLOR.surfaceAlt,
@@ -252,8 +362,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
-  label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.xs, marginTop: SPACE.md },
-  reconocido: { color: COLOR.success, fontSize: 12, marginTop: SPACE.xs, fontWeight: '600' },
+  label: { color: COLOR.textMuted, fontSize: 13, marginBottom: SPACE.xs, marginTop: SPACE.md, fontFamily: FONT.medium },
+  reconocido: { color: COLOR.success, fontSize: 12, marginTop: SPACE.xs, fontFamily: FONT.bold },
   input: {
     backgroundColor: COLOR.bg,
     borderRadius: RADIUS.sm,
@@ -262,6 +372,37 @@ const styles = StyleSheet.create({
     color: COLOR.text,
     borderWidth: 1,
     borderColor: COLOR.border,
+    fontFamily: FONT.regular,
+  },
+  campoConMic: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLOR.bg,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLOR.border,
+    paddingRight: SPACE.xs,
+  },
+  inputConMic: {
+    flex: 1,
+    padding: SPACE.md,
+    fontSize: 16,
+    color: COLOR.text,
+    fontFamily: FONT.regular,
+  },
+  btnMicInput: {
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLOR.brandTint,
+    borderWidth: 1,
+    borderColor: '#F4D1AC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnMicInputActivo: {
+    backgroundColor: COLOR.brand,
+    borderColor: COLOR.brandDark,
   },
   boton: {
     backgroundColor: COLOR.brand,
@@ -272,7 +413,7 @@ const styles = StyleSheet.create({
   },
   botonPresionado: { backgroundColor: COLOR.brandDark },
   botonDeshabilitado: { opacity: 0.35 },
-  botonTexto: { color: '#ffffff', fontWeight: '700', fontSize: 16, letterSpacing: 0.3 },
+  botonTexto: { color: '#ffffff', fontFamily: FONT.bold, fontSize: 16, letterSpacing: 0.3 },
   demoDetectado: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -293,11 +434,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     fontSize: 13,
-    fontWeight: '800',
+    fontFamily: FONT.bold,
   },
   demoDetectadoTexto: { flex: 1 },
-  demoDetectadoTitulo: { color: COLOR.success, fontSize: 12, fontWeight: '800' },
-  demoDetectadoDetalle: { color: COLOR.textMuted, fontSize: 11, marginTop: 1 },
+  demoDetectadoTitulo: { color: COLOR.success, fontSize: 12, fontFamily: FONT.bold },
+  demoDetectadoDetalle: { color: COLOR.textMuted, fontSize: 11, marginTop: 1, fontFamily: FONT.regular },
   accesoRapido: {
     width: '100%',
     maxWidth: 420,
@@ -321,10 +462,10 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     backgroundColor: COLOR.brand,
   },
-  demoBadgeTexto: { color: '#ffffff', fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
+  demoBadgeTexto: { color: '#ffffff', fontSize: 10, fontFamily: FONT.bold, letterSpacing: 0.8 },
   accesoRapidoTitulos: { flex: 1 },
-  accesoRapidoTitulo: { color: COLOR.text, fontSize: 15, fontWeight: '800' },
-  accesoRapidoSubtitulo: { color: COLOR.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2 },
+  accesoRapidoTitulo: { color: COLOR.text, fontSize: 15, fontFamily: FONT.bold },
+  accesoRapidoSubtitulo: { color: COLOR.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2, fontFamily: FONT.regular },
   listaOperariosDemo: { gap: SPACE.sm, marginTop: SPACE.md },
   operarioDemo: {
     flexDirection: 'row',
@@ -348,11 +489,11 @@ const styles = StyleSheet.create({
     borderColor: COLOR.border,
   },
   avatarDemoSeleccionado: { backgroundColor: COLOR.brand, borderColor: COLOR.brand },
-  avatarDemoTexto: { color: COLOR.textMuted, fontSize: 12, fontWeight: '900' },
+  avatarDemoTexto: { color: COLOR.textMuted, fontSize: 12, fontFamily: FONT.bold },
   operarioDemoInfo: { flex: 1, marginLeft: SPACE.sm + 2 },
-  operarioDemoNombre: { color: COLOR.text, fontSize: 14, fontWeight: '800' },
-  operarioDemoCedula: { color: COLOR.textFaint, fontSize: 11, marginTop: 2 },
-  operarioDemoAccion: { color: COLOR.brand, fontSize: 12, fontWeight: '800', paddingHorizontal: SPACE.xs },
+  operarioDemoNombre: { color: COLOR.text, fontSize: 14, fontFamily: FONT.bold },
+  operarioDemoCedula: { color: COLOR.textFaint, fontSize: 11, marginTop: 2, fontFamily: FONT.regular },
+  operarioDemoAccion: { color: COLOR.brand, fontSize: 12, fontFamily: FONT.bold, paddingHorizontal: SPACE.xs },
   operarioDemoAccionActiva: { color: COLOR.success, fontSize: 16 },
   pie: {
     color: COLOR.textFaint,
@@ -360,5 +501,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: SPACE.xxl,
     letterSpacing: 0.3,
+    fontFamily: FONT.regular,
   },
 });

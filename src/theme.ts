@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 /**
  * Identidad visual de SuperBrix: tema claro, naranja de marca exacto
  * (#EC8C2B, dado por la empresa) y colores de categoría reajustados para
@@ -40,6 +42,57 @@ export const COLOR = {
   violet: '#7C6FD1',
   violetBg: '#EEEBFA',
   neutralIcon: '#8A8071',
+} as const;
+
+export const ANDON = {
+  produccion: {
+    bg: '#F0FDF4',
+    border: '#22C55E',
+    texto: '#15803D',
+    badgeBg: '#DCFCE7',
+    badgeTexto: '#166534',
+    halo: 'rgba(34, 197, 94, 0.22)',
+  },
+  falla: {
+    bg: '#FEF2F2',
+    border: '#EF4444',
+    texto: '#B91C1C',
+    badgeBg: '#FEE2E2',
+    badgeTexto: '#991B1B',
+    halo: 'rgba(239, 68, 68, 0.22)',
+  },
+  material: {
+    bg: '#FFFBEB',
+    border: '#F59E0B',
+    texto: '#B45309',
+    badgeBg: '#FEF3C7',
+    badgeTexto: '#92400E',
+    halo: 'rgba(245, 158, 11, 0.22)',
+  },
+  setup: {
+    bg: '#EFF6FF',
+    border: '#3B82F6',
+    texto: '#1D4ED8',
+    badgeBg: '#DBEAFE',
+    badgeTexto: '#1E40AF',
+    halo: 'rgba(59, 130, 246, 0.22)',
+  },
+  pausa: {
+    bg: '#F8FAFC',
+    border: '#94A3B8',
+    texto: '#475569',
+    badgeBg: '#F1F5F9',
+    badgeTexto: '#334155',
+    halo: 'rgba(148, 163, 184, 0.22)',
+  },
+} as const;
+
+export const FONT = {
+  regular: Platform.select({ ios: 'Karla-Regular', android: 'Karla-Regular' }),
+  medium: Platform.select({ ios: 'Karla-Medium', android: 'Karla-Medium' }),
+  semiBold: Platform.select({ ios: 'Karla-SemiBold', android: 'Karla-SemiBold' }),
+  bold: Platform.select({ ios: 'Karla-Bold', android: 'Karla-Bold' }),
+  condensed: Platform.select({ ios: 'Karla-Bold', android: 'Karla-Bold' }),
 } as const;
 
 export const RADIUS = {
